@@ -139,16 +139,15 @@ response = requests.post("http://localhost:8000/query", json={
 ### Health Check
 - `GET /health` - Check system status
 
-### Models
-- `GET /models` - List available Ollama models
-- `POST /models/llm` - Set LLM model
-- `POST /models/embedding` - Set embedding model
+### Configuration
+- `GET /models` - List available Ollama models and current configuration
+- `POST /configure` - Update system configuration (LLM model, embedding model, temperature, etc.)
 
 ### Documents
 - `GET /documents` - List uploaded documents
 - `POST /upload` - Upload document (supports PDF, TXT, DOCX)
-- `DELETE /documents/{filename}` - Delete document
-- `DELETE /documents` - Clear all documents
+- `DELETE /documents/{filename}` - Delete specific document
+- `DELETE /clear` - Clear all documents
 
 ### Query
 - `POST /query` - Query documents with streaming support
