@@ -111,9 +111,45 @@ UPLOAD_DIR.mkdir(exist_ok=True)
 VECTOR_DIR.mkdir(exist_ok=True)
 
 METADATA_FILE = VECTOR_DIR / "metadata.json"
+CONFIG_FILE = VECTOR_DIR / "config.json"
 ALLOWED_EXTENSIONS = {'.pdf', '.txt', '.docx'}
 MAX_FILE_SIZE_MB = 20  # Maximum file size in MB
 MAX_FILE_SIZE_BYTES = MAX_FILE_SIZE_MB * 1024 * 1024
+
+def load_config():
+    """Load configuration from file."""
+    try:
+        if CONFIG_FILE.exists():
+            with open(CONFIG_FILE, 'r') as f:
+                config_data = json.load(f)
+            config.model = config_data.get('model', 'llama3')
+            config.embedding_model = config_data.get('embedding_model', 'nomic-embed-text')
+            config.chunk_size = config_data.get('chunk_size', 1000)
+            config.chunk_overlap = config_data.get('chunk_overlap', 200)
+            config.temperature = config_data.get('temperature', 0.7)
+            config.total_queries = config_data.get('total_queries', 0)
+            logger.info(f"Loaded configuration: model={config.model}, embedding={config.embedding_model}")
+        else:
+            logger.info("No existing config file found, using defaults")
+    except Exception as e:
+        logger.error(f"Error loading config: {e}")
+
+def save_config():
+    """Save configuration to file."""
+    try:
+        config_data = {
+            'model': config.model,
+            'embedding_model': config.embedding_model,
+            'chunk_size': config.chunk_size,
+            'chunk_overlap': config.chunk_overlap,
+            'temperature': config.temperature,
+            'total_queries': config.total_queries
+        }
+        with open(CONFIG_FILE, 'w') as f:
+            json.dump(config_data, f, indent=2)
+        logger.debug("Configuration saved successfully")
+    except Exception as e:
+        logger.error(f"Error saving config: {e}")
 
 def load_metadata():
     """Load document metadata from file."""
@@ -318,6 +354,9 @@ def get_available_models():
 async def startup_event():
     """Initialize application on startup."""
     logger.info("Starting RAG Application...")
+    
+    # Load configuration first
+    load_config()
     
     # Load existing data
     load_metadata()
@@ -953,6 +992,9 @@ async def configure_system(config_update: ModelConfig):
                 changed_fields.append("temperature")
                 if llm_model:
                     llm_model.temperature = config.temperature
+        
+        # Save configuration to file
+        save_config()
         
         logger.info(f"Configuration updated successfully, changed fields: {changed_fields}")
         

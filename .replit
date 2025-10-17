@@ -2,7 +2,7 @@ modules = ["python-3.11"]
 
 [nix]
 channel = "stable-25_05"
-packages = ["bash", "glibcLocales", "libxcrypt"]
+packages = ["bash", "glibcLocales", "libxcrypt", "ollama"]
 
 [deployment]
 deploymentTarget = "autoscale"
@@ -23,6 +23,10 @@ args = "FastAPI Backend"
 [[workflows.workflow.tasks]]
 task = "workflow.run"
 args = "Streamlit Frontend"
+
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "Ollama Service"
 
 [[workflows.workflow]]
 name = "FastAPI Backend"
@@ -48,6 +52,18 @@ waitForPort = 5000
 [workflows.workflow.metadata]
 outputType = "webview"
 
+[[workflows.workflow]]
+name = "Ollama Service"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "OLLAMA_HOST=0.0.0.0:11434 ollama serve"
+waitForPort = 11434
+
+[workflows.workflow.metadata]
+outputType = "console"
+
 [[ports]]
 localPort = 5000
 externalPort = 80
@@ -55,6 +71,10 @@ externalPort = 80
 [[ports]]
 localPort = 8000
 externalPort = 8000
+
+[[ports]]
+localPort = 11434
+externalPort = 3002
 
 [[ports]]
 localPort = 45689
