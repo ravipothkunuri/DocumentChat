@@ -4,9 +4,10 @@ import logging
 import traceback
 import subprocess
 import re
+import requests
 from datetime import datetime
 from pathlib import Path
-from typing import List, Dict, Any, Optional, AsyncGenerator
+from typing import List, Dict, Any, Optional, AsyncGenerator, Union
 from contextlib import asynccontextmanager
 
 import uvicorn
@@ -19,7 +20,7 @@ from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_community.document_loaders import (
     PyPDFLoader, TextLoader, UnstructuredWordDocumentLoader
 )
-from langchain_ollama import OllamaEmbeddings, ChatOllama
+from langchain_ollama import OllamaEmbeddings
 
 from vector_store import VectorStore, VectorStoreError
 
@@ -93,6 +94,159 @@ class DocumentInfo(BaseModel):
     type: str
 
 
+# Universal Ollama LLM Client
+class UniversalOllamaLLM:
+    """Universal Ollama client that works with all models using both /api/chat and /api/generate endpoints."""
+    
+    def __init__(self, model: str, temperature: float = 0.7, base_url: str = OLLAMA_BASE_URL):
+        self.model = model
+        self.temperature = temperature
+        self.base_url = base_url.rstrip('/')
+        self.supports_chat = self._check_chat_support()
+        logger.info(f"Initialized {model} - using {'chat' if self.supports_chat else 'generate'} endpoint")
+    
+    def _check_chat_support(self) -> bool:
+        """Check if model supports /api/chat endpoint."""
+        try:
+            response = requests.post(
+                f"{self.base_url}/api/chat",
+                json={
+                    "model": self.model,
+                    "messages": [{"role": "user", "content": "test"}],
+                    "stream": False
+                },
+                timeout=5
+            )
+            return response.status_code == 200
+        except Exception as e:
+            logger.debug(f"Chat endpoint check failed for {self.model}: {e}")
+            return False
+    
+    def invoke(self, prompt: str) -> str:
+        """Invoke the model with a prompt and return the response."""
+        try:
+            if self.supports_chat:
+                return self._invoke_chat(prompt)
+            else:
+                return self._invoke_generate(prompt)
+        except Exception as e:
+            logger.error(f"Error invoking model {self.model}: {e}")
+            raise
+    
+    def _invoke_chat(self, prompt: str) -> str:
+        """Use /api/chat endpoint."""
+        try:
+            response = requests.post(
+                f"{self.base_url}/api/chat",
+                json={
+                    "model": self.model,
+                    "messages": [{"role": "user", "content": prompt}],
+                    "stream": False,
+                    "options": {"temperature": self.temperature}
+                },
+                timeout=120
+            )
+            response.raise_for_status()
+            data = response.json()
+            return data.get("message", {}).get("content", "")
+        except Exception as e:
+            logger.error(f"Chat API error: {e}")
+            raise
+    
+    def _invoke_generate(self, prompt: str) -> str:
+        """Use /api/generate endpoint."""
+        try:
+            response = requests.post(
+                f"{self.base_url}/api/generate",
+                json={
+                    "model": self.model,
+                    "prompt": prompt,
+                    "stream": False,
+                    "options": {"temperature": self.temperature}
+                },
+                timeout=120
+            )
+            response.raise_for_status()
+            data = response.json()
+            return data.get("response", "")
+        except Exception as e:
+            logger.error(f"Generate API error: {e}")
+            raise
+    
+    def stream(self, prompt: str):
+        """Stream the model response."""
+        try:
+            if self.supports_chat:
+                yield from self._stream_chat(prompt)
+            else:
+                yield from self._stream_generate(prompt)
+        except Exception as e:
+            logger.error(f"Error streaming model {self.model}: {e}")
+            raise
+    
+    def _stream_chat(self, prompt: str):
+        """Stream using /api/chat endpoint."""
+        try:
+            response = requests.post(
+                f"{self.base_url}/api/chat",
+                json={
+                    "model": self.model,
+                    "messages": [{"role": "user", "content": prompt}],
+                    "stream": True,
+                    "options": {"temperature": self.temperature}
+                },
+                stream=True,
+                timeout=120
+            )
+            response.raise_for_status()
+            
+            for line in response.iter_lines():
+                if line:
+                    try:
+                        data = json.loads(line)
+                        content = data.get("message", {}).get("content", "")
+                        if content:
+                            yield content
+                        if data.get("done", False):
+                            break
+                    except json.JSONDecodeError:
+                        continue
+        except Exception as e:
+            logger.error(f"Chat streaming error: {e}")
+            raise
+    
+    def _stream_generate(self, prompt: str):
+        """Stream using /api/generate endpoint."""
+        try:
+            response = requests.post(
+                f"{self.base_url}/api/generate",
+                json={
+                    "model": self.model,
+                    "prompt": prompt,
+                    "stream": True,
+                    "options": {"temperature": self.temperature}
+                },
+                stream=True,
+                timeout=120
+            )
+            response.raise_for_status()
+            
+            for line in response.iter_lines():
+                if line:
+                    try:
+                        data = json.loads(line)
+                        content = data.get("response", "")
+                        if content:
+                            yield content
+                        if data.get("done", False):
+                            break
+                    except json.JSONDecodeError:
+                        continue
+        except Exception as e:
+            logger.error(f"Generate streaming error: {e}")
+            raise
+
+
 # Configuration Manager
 class ConfigManager:
     """Centralized configuration management."""
@@ -124,7 +278,7 @@ class ConfigManager:
                 )
             else:
                 logger.info("No existing config file, using defaults")
-                self.save()  # Save defaults
+                self.save()
         except Exception as e:
             logger.error(f"Error loading config: {e}, using defaults")
     
@@ -233,7 +387,7 @@ class ModelManager:
     def __init__(self, config: ConfigManager):
         self.config = config
         self.embeddings_model: Optional[OllamaEmbeddings] = None
-        self.llm_model: Optional[ChatOllama] = None
+        self.llm_model: Optional[UniversalOllamaLLM] = None
         self.llm_model_name: Optional[str] = None
     
     def get_embeddings_model(self) -> OllamaEmbeddings:
@@ -274,7 +428,7 @@ class ModelManager:
                 detail=f"Failed to initialize embeddings model '{model_name}': {str(e)}"
             )
     
-    def get_llm_model(self, model_name: Optional[str] = None) -> ChatOllama:
+    def get_llm_model(self, model_name: Optional[str] = None) -> UniversalOllamaLLM:
         """Get or create LLM model."""
         try:
             model_to_use = model_name or self.config.get('model')
@@ -283,7 +437,7 @@ class ModelManager:
             if self.llm_model is None or self.llm_model_name != model_to_use:
                 logger.info(f"Initializing LLM model: {model_to_use}")
                 
-                self.llm_model = ChatOllama(
+                self.llm_model = UniversalOllamaLLM(
                     model=model_to_use,
                     temperature=self.config.get('temperature'),
                     base_url=OLLAMA_BASE_URL
@@ -396,15 +550,10 @@ class DocumentProcessor:
 # Utility Functions
 def clean_llm_response(text: str) -> str:
     """Clean LLM response by removing reasoning tags."""
-    # Remove reasoning tags
     text = re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL | re.IGNORECASE)
     text = re.sub(r'<reasoning>.*?</reasoning>', '', text, flags=re.DOTALL | re.IGNORECASE)
     text = re.sub(r'<thought>.*?</thought>', '', text, flags=re.DOTALL | re.IGNORECASE)
-    
-    # Remove standalone tags
     text = re.sub(r'</?(?:think|reasoning|thought)>', '', text, flags=re.IGNORECASE)
-    
-    # Clean whitespace
     text = re.sub(r'\n{3,}', '\n\n', text)
     return text.strip()
 
@@ -420,7 +569,7 @@ def get_available_models() -> tuple[List[str], List[str]]:
         )
         
         if result.returncode == 0:
-            lines = result.stdout.strip().split('\n')[1:]  # Skip header
+            lines = result.stdout.strip().split('\n')[1:]
             models = []
             
             for line in lines:
@@ -447,36 +596,40 @@ def get_available_models() -> tuple[List[str], List[str]]:
 def check_ollama_available(config: ConfigManager) -> tuple[bool, str]:
     """Check if Ollama is available and models are accessible."""
     try:
+        # Check embeddings
         embeddings = OllamaEmbeddings(
             model=config.get('embedding_model'),
             base_url=OLLAMA_BASE_URL
         )
         embeddings.embed_query("test")
         
-        llm = ChatOllama(
-            model=config.get('model'),
-            base_url=OLLAMA_BASE_URL
+        # Check LLM using direct API
+        response = requests.post(
+            f"{OLLAMA_BASE_URL}/api/generate",
+            json={
+                "model": config.get('model'),
+                "prompt": "test",
+                "stream": False
+            },
+            timeout=10
         )
         
-        return True, f"Ollama available with {config.get('embedding_model')} and {config.get('model')}"
+        if response.status_code == 200:
+            return True, f"Ollama available with {config.get('embedding_model')} and {config.get('model')}"
+        else:
+            return False, f"LLM model {config.get('model')} not responding"
     except Exception as e:
         return False, str(e)
 
 
 def validate_file(filename: str, file_size: int) -> None:
-    """Validate uploaded file.
-    
-    Raises:
-        HTTPException: If validation fails
-    """
-    # Check file type
+    """Validate uploaded file."""
     if Path(filename).suffix.lower() not in ALLOWED_EXTENSIONS:
         raise HTTPException(
             status_code=400,
             detail=f"Unsupported file type. Allowed: {', '.join(ALLOWED_EXTENSIONS)}"
         )
     
-    # Check file size
     if file_size > MAX_FILE_SIZE_BYTES:
         raise HTTPException(
             status_code=400,
@@ -521,8 +674,8 @@ async def lifespan(app: FastAPI):
 # Initialize FastAPI app
 app = FastAPI(
     title="LangChain Ollama RAG Assistant API",
-    description="Production-ready RAG system with LangChain, Ollama, and custom vector store",
-    version="2.0.0",
+    description="Production-ready RAG system with universal Ollama model support",
+    version="2.1.0",
     docs_url="/docs",
     redoc_url="/redoc",
     lifespan=lifespan
@@ -583,14 +736,11 @@ async def upload_document(file: UploadFile = File(...)):
     """Upload and process a document synchronously."""
     logger.info(f"Upload request for file: {file.filename}")
     
-    # Read file content
     content = await file.read()
     file_size = len(content)
     
-    # Validate file
     validate_file(file.filename, file_size)
     
-    # Check for duplicates
     if metadata_manager.exists(file.filename):
         raise HTTPException(
             status_code=400,
@@ -600,160 +750,9 @@ async def upload_document(file: UploadFile = File(...)):
     file_path = UPLOAD_DIR / file.filename
     
     try:
-        # Save file
         with open(file_path, 'wb') as f:
             f.write(content)
         
-        # Process document
-        document_content = document_processor.load_document(file_path)
-        documents = document_processor.split_text(document_content, file.filename)
-        
-        if not documents:
-            raise ValueError("No content extracted from document")
-        
-        # Generate embeddings
-        embeddings_model = model_manager.get_embeddings_model()
-        texts = [doc["page_content"] for doc in documents]
-        embeddings = embeddings_model.embed_documents(texts)
-        
-        if not embeddings or len(embeddings) != len(documents):
-            raise ValueError("Failed to generate embeddings")
-        
-        # Add to vector store
-        vector_store.add_documents(documents, embeddings)
-        
-        # Save metadata
-        metadata_manager.add(file.filename, {
-            "filename": file.filename,
-            "size": file_size,
-            "chunks": len(documents),
-            "status": "processed",
-            "uploaded_at": datetime.now().isoformat(),
-            "type": file_path.suffix[1:].lower()
-        })
-        
-        vector_store.save()
-        
-        logger.info(
-            f"Successfully processed {file.filename}: "
-            f"{len(documents)} chunks, {file_size} bytes"
-        )
-        
-        return DocumentUploadResponse(
-            status="success",
-            filename=file.filename,
-            chunks=len(documents),
-            file_size=file_size,
-            message=f"Document processed successfully into {len(documents)} chunks"
-        )
-    
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error processing upload {file.filename}: {e}")
-        logger.debug(traceback.format_exc())
-        
-        # Cleanup
-        if file_path.exists():
-            file_path.unlink()
-        metadata_manager.remove(file.filename)
-        
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to process document: {str(e)}"
-        )
-
-
-async def process_document_background(filename: str, file_path: Path, file_size: int):
-    """Process document in background."""
-    try:
-        logger.info(f"Background processing started for {filename}")
-        
-        # Update status
-        metadata = metadata_manager.get(filename)
-        if metadata:
-            metadata["status"] = "processing"
-            metadata_manager.add(filename, metadata)
-        
-        # Process document
-        document_content = document_processor.load_document(file_path)
-        documents = document_processor.split_text(document_content, filename)
-        
-        if not documents:
-            raise ValueError("No content extracted from document")
-        
-        # Generate embeddings
-        embeddings_model = model_manager.get_embeddings_model()
-        texts = [doc["page_content"] for doc in documents]
-        embeddings = embeddings_model.embed_documents(texts)
-        
-        if not embeddings or len(embeddings) != len(documents):
-            raise ValueError("Failed to generate embeddings")
-        
-        # Add to vector store
-        vector_store.add_documents(documents, embeddings)
-        
-        # Update metadata
-        metadata = metadata_manager.get(filename) or {}
-        metadata.update({
-            "chunks": len(documents),
-            "status": "processed"
-        })
-        metadata_manager.add(filename, metadata)
-        
-        vector_store.save()
-        
-        logger.info(
-            f"Background processing completed for {filename}: {len(documents)} chunks"
-        )
-    
-    except Exception as e:
-        logger.error(f"Error in background processing for {filename}: {e}")
-        logger.debug(traceback.format_exc())
-        
-        # Update error status
-        metadata = metadata_manager.get(filename) or {}
-        metadata.update({
-            "status": "failed",
-            "error": str(e)
-        })
-        metadata_manager.add(filename, metadata)
-        
-        # Cleanup
-        if file_path.exists():
-            file_path.unlink()
-
-
-@app.post("/upload/async", tags=["Documents"])
-async def upload_document_async(
-    file: UploadFile = File(...), 
-    background_tasks: BackgroundTasks = None
-):
-    """Upload a document and process it in the background."""
-    logger.info(f"Async upload request for file: {file.filename}")
-    
-    # Read file content
-    content = await file.read()
-    file_size = len(content)
-    
-    # Validate file
-    validate_file(file.filename, file_size)
-    
-    # Check for duplicates
-    if metadata_manager.exists(file.filename):
-        raise HTTPException(
-            status_code=400,
-            detail=f"Document '{file.filename}' already exists. Delete it first or rename your file."
-        )
-    
-    file_path = UPLOAD_DIR / file.filename
-    
-    try:
-        # Save file
-        with open(file_path, 'wb') as f:
-            f.write(content)
-        
-        # Save initial metadata
         metadata_manager.add(file.filename, {
             "filename": file.filename,
             "size": file_size,
@@ -763,7 +762,6 @@ async def upload_document_async(
             "type": file_path.suffix[1:].lower()
         })
         
-        # Schedule background processing
         background_tasks.add_task(
             process_document_background, 
             file.filename, 
@@ -786,7 +784,6 @@ async def upload_document_async(
         logger.error(f"Error during async upload {file.filename}: {e}")
         logger.debug(traceback.format_exc())
         
-        # Cleanup
         if file_path.exists():
             file_path.unlink()
         metadata_manager.remove(file.filename)
@@ -808,7 +805,6 @@ async def query_documents(request: QueryRequest):
     start_time = datetime.now()
     
     try:
-        # Check if documents exist
         stats = vector_store.get_stats()
         if stats.get("total_chunks", 0) == 0:
             raise HTTPException(
@@ -816,11 +812,9 @@ async def query_documents(request: QueryRequest):
                 detail="No documents available. Please upload some documents first."
             )
         
-        # Generate query embedding
         embeddings_model = model_manager.get_embeddings_model()
         query_embedding = embeddings_model.embed_query(request.question)
         
-        # Perform similarity search
         similar_docs = vector_store.similarity_search(query_embedding, k=request.top_k)
         
         if not similar_docs:
@@ -829,7 +823,6 @@ async def query_documents(request: QueryRequest):
                 detail="No relevant documents found for your query."
             )
         
-        # Prepare context
         context_parts = []
         sources = []
         similarity_scores = []
@@ -844,14 +837,11 @@ async def query_documents(request: QueryRequest):
         
         context = "\n\n".join(context_parts)
         
-        # Get LLM
         llm = model_manager.get_llm_model(request.model)
         
-        # Update temperature if specified
         if request.temperature is not None:
             llm.temperature = request.temperature
         
-        # Build prompt
         unique_sources = list(set(sources))
         doc_identity = (
             unique_sources[0] if len(unique_sources) == 1
@@ -873,11 +863,9 @@ Respond naturally as the document, using "I" when referring to your content. For
 
 Your response:"""
         
-        # Stream or regular response
         if request.stream:
             async def generate() -> AsyncGenerator[str, None]:
                 try:
-                    # Send metadata first
                     metadata = {
                         "sources": sources,
                         "chunks_used": len(similar_docs),
@@ -886,16 +874,10 @@ Your response:"""
                     }
                     yield f"data: {json.dumps(metadata)}\n\n"
                     
-                    # Stream content
                     full_answer = ""
                     for chunk in llm.stream(prompt):
-                        content = (
-                            chunk.content if hasattr(chunk, 'content') 
-                            else str(chunk)
-                        )
-                        full_answer += content
+                        full_answer += chunk
                     
-                    # Clean and send response
                     cleaned_answer = clean_llm_response(full_answer)
                     
                     chunk_size = 50
@@ -903,7 +885,6 @@ Your response:"""
                         chunk_text = cleaned_answer[i:i + chunk_size]
                         yield f"data: {json.dumps({'type': 'content', 'content': chunk_text})}\n\n"
                     
-                    # Send completion
                     processing_time = (datetime.now() - start_time).total_seconds()
                     completion = {
                         "type": "done",
@@ -929,13 +910,7 @@ Your response:"""
             return StreamingResponse(generate(), media_type="text/event-stream")
         
         else:
-            # Regular response
-            response = llm.invoke(prompt)
-            answer = (
-                response.content if hasattr(response, 'content') 
-                else str(response)
-            )
-            
+            answer = llm.invoke(prompt)
             answer = clean_llm_response(answer)
             processing_time = (datetime.now() - start_time).total_seconds()
             
@@ -986,13 +961,9 @@ async def delete_document(filename: str):
         )
     
     try:
-        # Remove from vector store
         vector_store.remove_documents_by_source(filename)
-        
-        # Remove metadata
         metadata_manager.remove(filename)
         
-        # Remove file
         file_path = UPLOAD_DIR / filename
         if file_path.exists():
             file_path.unlink()
@@ -1022,7 +993,6 @@ async def clear_all_documents():
         vector_store.clear()
         metadata_manager.clear()
         
-        # Remove all files
         for file_path in UPLOAD_DIR.glob("*"):
             if file_path.is_file():
                 file_path.unlink()
@@ -1105,7 +1075,6 @@ async def configure_system(config_update: ModelConfig):
     try:
         changed_fields = config_manager.update(**config_update.dict(exclude_none=True))
         
-        # Reset models if necessary
         if "model" in changed_fields:
             model_manager.reset_llm_model()
         
@@ -1146,7 +1115,6 @@ async def get_models():
     try:
         llm_models, embedding_models = get_available_models()
         
-        # Fallback to defaults
         if not llm_models:
             llm_models = ["phi3", "llama3", "mistral"]
         if not embedding_models:
@@ -1226,19 +1194,15 @@ async def rebuild_vectors():
                     results[filename] = {"success": False, "error": "File not found"}
                     continue
                 
-                # Process document
                 document_content = document_processor.load_document(file_path)
                 documents = document_processor.split_text(document_content, filename)
                 
-                # Generate embeddings
                 embeddings_model = model_manager.get_embeddings_model()
                 texts = [doc["page_content"] for doc in documents]
                 embeddings = embeddings_model.embed_documents(texts)
                 
-                # Add to vector store
                 vector_store.add_documents(documents, embeddings)
                 
-                # Update metadata
                 metadata = metadata_manager.get(filename) or {}
                 metadata["chunks"] = len(documents)
                 metadata_manager.add(filename, metadata)
@@ -1282,4 +1246,137 @@ if __name__ == "__main__":
         port=8000,
         reload=False,
         log_level="info"
-    )'
+    ).filename):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Document '{file.filename}' already exists. Delete it first or rename your file."
+        )
+    
+    file_path = UPLOAD_DIR / file.filename
+    
+    try:
+        with open(file_path, 'wb') as f:
+            f.write(content)
+        
+        document_content = document_processor.load_document(file_path)
+        documents = document_processor.split_text(document_content, file.filename)
+        
+        if not documents:
+            raise ValueError("No content extracted from document")
+        
+        embeddings_model = model_manager.get_embeddings_model()
+        texts = [doc["page_content"] for doc in documents]
+        embeddings = embeddings_model.embed_documents(texts)
+        
+        if not embeddings or len(embeddings) != len(documents):
+            raise ValueError("Failed to generate embeddings")
+        
+        vector_store.add_documents(documents, embeddings)
+        
+        metadata_manager.add(file.filename, {
+            "filename": file.filename,
+            "size": file_size,
+            "chunks": len(documents),
+            "status": "processed",
+            "uploaded_at": datetime.now().isoformat(),
+            "type": file_path.suffix[1:].lower()
+        })
+        
+        vector_store.save()
+        
+        logger.info(
+            f"Successfully processed {file.filename}: "
+            f"{len(documents)} chunks, {file_size} bytes"
+        )
+        
+        return DocumentUploadResponse(
+            status="success",
+            filename=file.filename,
+            chunks=len(documents),
+            file_size=file_size,
+            message=f"Document processed successfully into {len(documents)} chunks"
+        )
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error processing upload {file.filename}: {e}")
+        logger.debug(traceback.format_exc())
+        
+        if file_path.exists():
+            file_path.unlink()
+        metadata_manager.remove(file.filename)
+        
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to process document: {str(e)}"
+        )
+
+
+async def process_document_background(filename: str, file_path: Path, file_size: int):
+    """Process document in background."""
+    try:
+        logger.info(f"Background processing started for {filename}")
+        
+        metadata = metadata_manager.get(filename)
+        if metadata:
+            metadata["status"] = "processing"
+            metadata_manager.add(filename, metadata)
+        
+        document_content = document_processor.load_document(file_path)
+        documents = document_processor.split_text(document_content, filename)
+        
+        if not documents:
+            raise ValueError("No content extracted from document")
+        
+        embeddings_model = model_manager.get_embeddings_model()
+        texts = [doc["page_content"] for doc in documents]
+        embeddings = embeddings_model.embed_documents(texts)
+        
+        if not embeddings or len(embeddings) != len(documents):
+            raise ValueError("Failed to generate embeddings")
+        
+        vector_store.add_documents(documents, embeddings)
+        
+        metadata = metadata_manager.get(filename) or {}
+        metadata.update({
+            "chunks": len(documents),
+            "status": "processed"
+        })
+        metadata_manager.add(filename, metadata)
+        
+        vector_store.save()
+        
+        logger.info(
+            f"Background processing completed for {filename}: {len(documents)} chunks"
+        )
+    
+    except Exception as e:
+        logger.error(f"Error in background processing for {filename}: {e}")
+        logger.debug(traceback.format_exc())
+        
+        metadata = metadata_manager.get(filename) or {}
+        metadata.update({
+            "status": "failed",
+            "error": str(e)
+        })
+        metadata_manager.add(filename, metadata)
+        
+        if file_path.exists():
+            file_path.unlink()
+
+
+@app.post("/upload/async", tags=["Documents"])
+async def upload_document_async(
+    file: UploadFile = File(...), 
+    background_tasks: BackgroundTasks = None
+):
+    """Upload a document and process it in the background."""
+    logger.info(f"Async upload request for file: {file.filename}")
+    
+    content = await file.read()
+    file_size = len(content)
+    
+    validate_file(file.filename, file_size)
+    
+    if metadata_manager.exists(file
