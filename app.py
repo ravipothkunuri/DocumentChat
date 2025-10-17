@@ -13,12 +13,13 @@ st.set_page_config(
     page_title="RAG Document Assistant",
     page_icon="📚",
     layout="wide",
-    initial_sidebar_state="expanded"
+    initial_sidebar_state="auto"
 )
 
-# Custom CSS for better styling
+# Custom CSS for responsive mobile-friendly styling
 st.markdown("""
 <style>
+/* Base styles */
 .main-header {
     font-size: 2.5rem;
     color: #1f77b4;
@@ -38,6 +39,82 @@ st.markdown("""
     padding: 1rem;
     border-radius: 0.5rem;
     margin: 0.5rem 0;
+}
+
+/* Mobile responsive styles */
+@media screen and (max-width: 768px) {
+    /* Adjust header for mobile */
+    .main-header {
+        font-size: 1.8rem;
+        margin-bottom: 1rem;
+    }
+    
+    /* Make buttons full width on mobile */
+    .stButton button {
+        width: 100% !important;
+        margin: 0.25rem 0 !important;
+    }
+    
+    /* Stack columns vertically on mobile */
+    .row-widget.stHorizontalBlock {
+        flex-direction: column !important;
+    }
+    
+    /* Better text input sizing */
+    .stTextInput, .stTextArea {
+        width: 100% !important;
+    }
+    
+    /* Adjust metrics display */
+    div[data-testid="metric-container"] {
+        min-width: 100% !important;
+        margin-bottom: 1rem;
+    }
+    
+    /* Better file uploader */
+    .stFileUploader {
+        width: 100% !important;
+    }
+    
+    /* Sidebar adjustments */
+    section[data-testid="stSidebar"] {
+        width: 100% !important;
+    }
+    
+    /* Form elements */
+    .stSelectbox, .stSlider, .stNumberInput {
+        width: 100% !important;
+        margin-bottom: 1rem !important;
+    }
+    
+    /* Expander full width */
+    .streamlit-expanderHeader {
+        width: 100% !important;
+    }
+}
+
+/* Tablet responsive styles */
+@media screen and (min-width: 769px) and (max-width: 1024px) {
+    .main-header {
+        font-size: 2rem;
+    }
+    
+    div[data-testid="column"] {
+        padding: 0 0.5rem !important;
+    }
+}
+
+/* Touch-friendly button sizing */
+@media (hover: none) and (pointer: coarse) {
+    .stButton button {
+        min-height: 44px !important;
+        padding: 0.75rem 1rem !important;
+    }
+    
+    /* Larger tap targets for mobile */
+    button, a, input, select {
+        min-height: 44px;
+    }
 }
 </style>
 """, unsafe_allow_html=True)
@@ -70,15 +147,6 @@ def get_documents():
     except requests.exceptions.RequestException:
         return []
 
-def get_stats():
-    """Get application statistics."""
-    try:
-        response = requests.get(f"{API_BASE_URL}/stats", timeout=10)
-        if response.status_code == 200:
-            return response.json()
-        return {}
-    except requests.exceptions.RequestException:
-        return {}
 
 def upload_file(file):
     """Upload a file to the backend."""
@@ -89,29 +157,6 @@ def upload_file(file):
     except requests.exceptions.RequestException as e:
         return 500, {"message": f"Connection error: {str(e)}"}
 
-def query_documents(question, model=None, top_k=4, temperature=None, stream=False):
-    """Query the documents."""
-    try:
-        data = {
-            "question": question,
-            "top_k": top_k,
-            "stream": stream
-        }
-        if model:
-            data["model"] = model
-        if temperature is not None:
-            data["temperature"] = temperature
-            
-        response = requests.post(f"{API_BASE_URL}/query", json=data, timeout=120, stream=stream)
-        
-        if stream:
-            return response
-        else:
-            return response.status_code, response.json() if response.status_code in [200, 400] else {"message": "Query failed"}
-    except requests.exceptions.RequestException as e:
-        if stream:
-            return None
-        return 500, {"message": f"Connection error: {str(e)}"}
 
 def delete_document(filename):
     """Delete a specific document."""
@@ -155,8 +200,6 @@ def rebuild_vectors():
 
 # Main app
 def main():
-    st.markdown('<h1 class="main-header">📚 RAG Document Assistant</h1>', unsafe_allow_html=True)
-    
     # Check backend health
     health_status, health_data = check_backend_health()
     
@@ -165,25 +208,32 @@ def main():
         st.code("python rag_backend.py")
         return
     
-    # Sidebar navigation
-    st.sidebar.title("Navigation")
-    page = st.sidebar.selectbox(
-        "Choose a page",
-        ["📋 Dashboard", "📤 Upload Documents", "🔍 Query Documents", "⚙️ Configuration", "📊 Statistics", "🔧 Debug Tools"]
-    )
+    # Hamburger menu navigation
+    with st.sidebar:
+        st.markdown('<h1 class="main-header">📚 RAG Assistant</h1>', unsafe_allow_html=True)
+        st.markdown("---")
+        
+        # Initialize session state for page
+        if 'current_page' not in st.session_state:
+            st.session_state.current_page = "📋 Dashboard"
+        
+        # Menu options
+        if st.button("📋 Dashboard", use_container_width=True):
+            st.session_state.current_page = "📋 Dashboard"
+        
+        if st.button("📤 Upload Documents", use_container_width=True):
+            st.session_state.current_page = "📤 Upload Documents"
+        
+        if st.button("⚙️ Configuration", use_container_width=True):
+            st.session_state.current_page = "⚙️ Configuration"
     
-    if page == "📋 Dashboard":
+    # Display selected page
+    if st.session_state.current_page == "📋 Dashboard":
         dashboard_page(health_data)
-    elif page == "📤 Upload Documents":
+    elif st.session_state.current_page == "📤 Upload Documents":
         upload_page()
-    elif page == "🔍 Query Documents":
-        query_page()
-    elif page == "⚙️ Configuration":
+    elif st.session_state.current_page == "⚙️ Configuration":
         config_page()
-    elif page == "📊 Statistics":
-        stats_page()
-    elif page == "🔧 Debug Tools":
-        debug_page()
 
 def dashboard_page(health_data):
     st.header("Dashboard")
@@ -350,162 +400,6 @@ def upload_page():
     else:
         st.info("No documents uploaded yet.")
 
-def query_page():
-    st.header("Query Documents")
-    
-    documents = get_documents()
-    if not documents:
-        st.warning("No documents available. Please upload some documents first!")
-        return
-    
-    # Get available models
-    models_data = get_models()
-    
-    # Query form
-    with st.form("query_form"):
-        question = st.text_area("Ask a question about your documents:", height=100)
-        
-        col1, col2, col3, col4 = st.columns(4)
-        
-        with col1:
-            model = st.selectbox(
-                "LLM Model",
-                options=models_data.get('llm_models', ['llama3']),
-                index=0
-            )
-        
-        with col2:
-            top_k = st.slider("Number of chunks", 1, 10, 4)
-        
-        with col3:
-            temperature = st.slider("Temperature", 0.0, 2.0, 0.7, step=0.1)
-        
-        with col4:
-            use_streaming = st.checkbox("Stream response", value=True, help="Display answer in real-time")
-        
-        submitted = st.form_submit_button("Ask Question", type="primary")
-    
-    if submitted and question.strip():
-        if use_streaming:
-            # Streaming mode
-            with st.spinner("Searching documents..."):
-                response = query_documents(
-                    question=question,
-                    model=model,
-                    top_k=top_k,
-                    temperature=temperature,
-                    stream=True
-                )
-            
-            if response and response.status_code == 200:
-                # Parse streaming response
-                metadata = None
-                answer_placeholder = st.empty()
-                answer_text = ""
-                processing_time = 0
-                
-                st.subheader("Answer")
-                
-                try:
-                    for line in response.iter_lines():
-                        if line:
-                            line_str = line.decode('utf-8')
-                            if line_str.startswith('data: '):
-                                data = json.loads(line_str[6:])
-                                
-                                if data.get('type') == 'metadata':
-                                    metadata = data
-                                elif data.get('type') == 'content':
-                                    answer_text += data.get('content', '')
-                                    answer_placeholder.write(answer_text)
-                                elif data.get('type') == 'done':
-                                    processing_time = data.get('processing_time', 0)
-                    
-                    st.success(f"Query completed in {processing_time:.2f} seconds")
-                    
-                    # Sources and metadata
-                    if metadata:
-                        col1, col2 = st.columns(2)
-                        
-                        with col1:
-                            st.subheader("Sources")
-                            sources = metadata.get('sources', [])
-                            unique_sources = list(set(sources))
-                            for source in unique_sources:
-                                st.write(f"📄 {source}")
-                        
-                        with col2:
-                            st.subheader("Retrieval Details")
-                            st.write(f"**Chunks used:** {metadata.get('chunks_used', 0)}")
-                            scores = metadata.get('similarity_scores', [])
-                            if scores:
-                                avg_score = sum(scores) / len(scores)
-                                st.write(f"**Average similarity:** {avg_score:.3f}")
-                                st.write(f"**Best match:** {max(scores):.3f}")
-                        
-                        # Similarity scores
-                        if metadata.get('similarity_scores'):
-                            st.subheader("Similarity Scores")
-                            for i, (score, source) in enumerate(zip(metadata['similarity_scores'], metadata['sources'])):
-                                st.write(f"Chunk {i+1}: {score:.3f} - {source}")
-                
-                except Exception as e:
-                    st.error(f"Error processing streaming response: {str(e)}")
-            else:
-                st.error("Failed to get streaming response")
-        else:
-            # Non-streaming mode
-            with st.spinner("Searching documents and generating answer..."):
-                start_time = time.time()
-                
-                status_code, response = query_documents(
-                    question=question,
-                    model=model,
-                    top_k=top_k,
-                    temperature=temperature,
-                    stream=False
-                )
-                
-                end_time = time.time()
-            
-            if status_code == 200:
-                st.success(f"Query completed in {response.get('processing_time', end_time - start_time):.2f} seconds")
-                
-                # Answer
-                st.subheader("Answer")
-                st.write(response['answer'])
-                
-                # Sources and metadata
-                col1, col2 = st.columns(2)
-                
-                with col1:
-                    st.subheader("Sources")
-                    sources = response.get('sources', [])
-                    unique_sources = list(set(sources))
-                    for source in unique_sources:
-                        st.write(f"📄 {source}")
-                
-                with col2:
-                    st.subheader("Retrieval Details")
-                    st.write(f"**Chunks used:** {response.get('chunks_used', 0)}")
-                    scores = response.get('similarity_scores', [])
-                    if scores:
-                        avg_score = sum(scores) / len(scores)
-                        st.write(f"**Average similarity:** {avg_score:.3f}")
-                        st.write(f"**Best match:** {max(scores):.3f}")
-                
-                # Similarity scores
-                if response.get('similarity_scores'):
-                    st.subheader("Similarity Scores")
-                    for i, (score, source) in enumerate(zip(response['similarity_scores'], response['sources'])):
-                        st.write(f"Chunk {i+1}: {score:.3f} - {source}")
-            
-            else:
-                st.error(f"Query failed: {response.get('message', 'Unknown error')}")
-    
-    elif submitted:
-        st.error("Please enter a question!")
-
 def config_page():
     st.header("Configuration")
     
@@ -595,177 +489,6 @@ def config_page():
     
     for key, value in current_config.items():
         st.write(f"**{key}:** {value}")
-
-def stats_page():
-    st.header("Statistics")
-    
-    stats = get_stats()
-    documents = get_documents()
-    
-    if not stats and not documents:
-        st.info("No statistics available yet.")
-        return
-    
-    # Overview metrics
-    col1, col2, col3, col4 = st.columns(4)
-    
-    with col1:
-        st.metric("Total Documents", stats.get('total_documents', len(documents)))
-    
-    with col2:
-        st.metric("Total Chunks", stats.get('total_chunks', 0))
-    
-    with col3:
-        st.metric("Total Queries", stats.get('total_queries', 0))
-    
-    with col4:
-        avg_chunks = stats.get('average_chunks_per_document', 0)
-        st.metric("Avg Chunks/Doc", f"{avg_chunks:.1f}" if avg_chunks else "0")
-    
-    # Document breakdown
-    if documents:
-        st.subheader("Document Breakdown")
-        
-        # Document types
-        doc_types = {}
-        total_size = 0
-        
-        for doc in documents:
-            doc_type = doc['type'].upper()
-            doc_types[doc_type] = doc_types.get(doc_type, 0) + 1
-            total_size += doc['size']
-        
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            st.write("**Document Types:**")
-            for doc_type, count in doc_types.items():
-                st.write(f"• {doc_type}: {count}")
-        
-        with col2:
-            st.write("**Storage:**")
-            st.write(f"• Total Size: {total_size:,} bytes ({total_size / (1024*1024):.2f} MB)")
-            if stats.get('last_update'):
-                st.write(f"• Last Update: {stats['last_update']}")
-    
-    # Detailed document list
-    if documents:
-        st.subheader("Document Details")
-        
-        for doc in documents:
-            with st.expander(f"{doc['filename']} - {doc['chunks']} chunks"):
-                col1, col2, col3 = st.columns(3)
-                
-                with col1:
-                    st.write(f"**Type:** {doc['type'].upper()}")
-                    st.write(f"**Size:** {doc['size']:,} bytes")
-                
-                with col2:
-                    st.write(f"**Chunks:** {doc['chunks']}")
-                    st.write(f"**Status:** {doc['status']}")
-                
-                with col3:
-                    st.write(f"**Uploaded:** {doc['uploaded_at']}")
-
-def debug_page():
-    st.header("Debug Tools")
-    
-    # Debug embeddings
-    st.subheader("Embedding Test")
-    
-    test_text = st.text_input("Test text for embedding generation:", "This is a test sentence.")
-    
-    if st.button("Test Embeddings"):
-        try:
-            response = requests.get(f"{API_BASE_URL}/debug/embeddings", params={"text": test_text}, timeout=30)
-            if response.status_code == 200:
-                data = response.json()
-                st.success("✅ Embedding generation successful!")
-                st.write(f"**Model:** {data.get('model', 'N/A')}")
-                st.write(f"**Dimensions:** {data.get('dimensions', 'N/A')}")
-                st.write(f"**Generation Time:** {data.get('generation_time', 'N/A'):.3f}s")
-                
-                # Show first few embedding values
-                embedding = data.get('embedding', [])
-                if embedding:
-                    st.write("**First 10 embedding values:**")
-                    st.write(embedding[:10])
-            else:
-                data = response.json()
-                st.error(f"❌ Embedding test failed: {data.get('message', 'Unknown error')}")
-        except requests.exceptions.RequestException as e:
-            st.error(f"❌ Connection error: {str(e)}")
-    
-    # Vector store inspection
-    st.subheader("Vector Store Inspection")
-    
-    if st.button("Inspect Vector Store"):
-        try:
-            response = requests.get(f"{API_BASE_URL}/debug/vector-store", timeout=30)
-            if response.status_code == 200:
-                data = response.json()
-                st.success("✅ Vector store inspection complete!")
-                
-                col1, col2 = st.columns(2)
-                
-                with col1:
-                    st.write(f"**Total Documents:** {data.get('total_documents', 0)}")
-                    st.write(f"**Total Chunks:** {data.get('total_chunks', 0)}")
-                    st.write(f"**Embedding Dimensions:** {data.get('embedding_dimensions', 'N/A')}")
-                
-                with col2:
-                    st.write(f"**Dimension Consistency:** {'✅' if data.get('dimension_consistent', False) else '❌'}")
-                    st.write(f"**Vector Store Size:** {data.get('vector_store_size', 'N/A')}")
-                
-                # Sample documents
-                sample_docs = data.get('sample_documents', [])
-                if sample_docs:
-                    st.write("**Sample Documents:**")
-                    for doc in sample_docs[:5]:  # Show first 5
-                        st.write(f"• {doc.get('source', 'Unknown')} (Chunk {doc.get('chunk_id', 'N/A')})")
-            else:
-                data = response.json()
-                st.error(f"❌ Vector store inspection failed: {data.get('message', 'Unknown error')}")
-        except requests.exceptions.RequestException as e:
-            st.error(f"❌ Connection error: {str(e)}")
-    
-    # System actions
-    st.subheader("System Actions")
-    
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        if st.button("🔄 Rebuild All Vectors", type="secondary"):
-            with st.spinner("Rebuilding all vectors..."):
-                status_code, response = rebuild_vectors()
-                
-                if status_code == 200:
-                    st.success("✅ Vectors rebuilt successfully!")
-                    results = response.get('results', {})
-                    
-                    success_count = sum(1 for result in results.values() if result['success'])
-                    total_count = len(results)
-                    
-                    st.write(f"**Summary:** {success_count}/{total_count} documents processed successfully")
-                    
-                    for filename, result in results.items():
-                        if result['success']:
-                            st.write(f"✅ {filename}: {result['chunks']} chunks")
-                        else:
-                            st.write(f"❌ {filename}: {result['error']}")
-                else:
-                    st.error(f"❌ Rebuild failed: {response.get('message', 'Unknown error')}")
-    
-    with col2:
-        if st.button("🔍 Check Backend Health"):
-            health_status, health_data = check_backend_health()
-            
-            if health_status:
-                st.success("✅ Backend is healthy!")
-                if health_data:
-                    st.json(health_data)
-            else:
-                st.error("❌ Backend is not responding!")
 
 # Run the app
 if __name__ == "__main__":

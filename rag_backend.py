@@ -350,7 +350,7 @@ async def health_check():
         )
 
 # Background processing function
-async def process_document_background(filename: str, file_path: Path, file_size: int):
+def process_document_background(filename: str, file_path: Path, file_size: int):
     """Process document in background."""
     try:
         logger.info(f"Background processing started for {filename}")
