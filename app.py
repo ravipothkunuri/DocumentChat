@@ -89,21 +89,28 @@ def upload_file(file):
     except requests.exceptions.RequestException as e:
         return 500, {"message": f"Connection error: {str(e)}"}
 
-def query_documents(question, model=None, top_k=4, temperature=None):
+def query_documents(question, model=None, top_k=4, temperature=None, stream=False):
     """Query the documents."""
     try:
         data = {
             "question": question,
-            "top_k": top_k
+            "top_k": top_k,
+            "stream": stream
         }
         if model:
             data["model"] = model
         if temperature is not None:
             data["temperature"] = temperature
             
-        response = requests.post(f"{API_BASE_URL}/query", json=data, timeout=120)
-        return response.status_code, response.json() if response.status_code in [200, 400] else {"message": "Query failed"}
+        response = requests.post(f"{API_BASE_URL}/query", json=data, timeout=120, stream=stream)
+        
+        if stream:
+            return response
+        else:
+            return response.status_code, response.json() if response.status_code in [200, 400] else {"message": "Query failed"}
     except requests.exceptions.RequestException as e:
+        if stream:
+            return None
         return 500, {"message": f"Connection error: {str(e)}"}
 
 def delete_document(filename):
@@ -358,7 +365,7 @@ def query_page():
     with st.form("query_form"):
         question = st.text_area("Ask a question about your documents:", height=100)
         
-        col1, col2, col3 = st.columns(3)
+        col1, col2, col3, col4 = st.columns(4)
         
         with col1:
             model = st.selectbox(
@@ -368,60 +375,133 @@ def query_page():
             )
         
         with col2:
-            top_k = st.slider("Number of chunks to retrieve", 1, 10, 4)
+            top_k = st.slider("Number of chunks", 1, 10, 4)
         
         with col3:
             temperature = st.slider("Temperature", 0.0, 2.0, 0.7, step=0.1)
         
+        with col4:
+            use_streaming = st.checkbox("Stream response", value=True, help="Display answer in real-time")
+        
         submitted = st.form_submit_button("Ask Question", type="primary")
     
     if submitted and question.strip():
-        with st.spinner("Searching documents and generating answer..."):
-            start_time = time.time()
+        if use_streaming:
+            # Streaming mode
+            with st.spinner("Searching documents..."):
+                response = query_documents(
+                    question=question,
+                    model=model,
+                    top_k=top_k,
+                    temperature=temperature,
+                    stream=True
+                )
             
-            status_code, response = query_documents(
-                question=question,
-                model=model,
-                top_k=top_k,
-                temperature=temperature
-            )
-            
-            end_time = time.time()
-        
-        if status_code == 200:
-            st.success(f"Query completed in {response.get('processing_time', end_time - start_time):.2f} seconds")
-            
-            # Answer
-            st.subheader("Answer")
-            st.write(response['answer'])
-            
-            # Sources and metadata
-            col1, col2 = st.columns(2)
-            
-            with col1:
-                st.subheader("Sources")
-                sources = response.get('sources', [])
-                unique_sources = list(set(sources))
-                for source in unique_sources:
-                    st.write(f"📄 {source}")
-            
-            with col2:
-                st.subheader("Retrieval Details")
-                st.write(f"**Chunks used:** {response.get('chunks_used', 0)}")
-                scores = response.get('similarity_scores', [])
-                if scores:
-                    avg_score = sum(scores) / len(scores)
-                    st.write(f"**Average similarity:** {avg_score:.3f}")
-                    st.write(f"**Best match:** {max(scores):.3f}")
-            
-            # Similarity scores
-            if response.get('similarity_scores'):
-                st.subheader("Similarity Scores")
-                for i, (score, source) in enumerate(zip(response['similarity_scores'], response['sources'])):
-                    st.write(f"Chunk {i+1}: {score:.3f} - {source}")
-        
+            if response and response.status_code == 200:
+                # Parse streaming response
+                metadata = None
+                answer_placeholder = st.empty()
+                answer_text = ""
+                processing_time = 0
+                
+                st.subheader("Answer")
+                
+                try:
+                    for line in response.iter_lines():
+                        if line:
+                            line_str = line.decode('utf-8')
+                            if line_str.startswith('data: '):
+                                data = json.loads(line_str[6:])
+                                
+                                if data.get('type') == 'metadata':
+                                    metadata = data
+                                elif data.get('type') == 'content':
+                                    answer_text += data.get('content', '')
+                                    answer_placeholder.write(answer_text)
+                                elif data.get('type') == 'done':
+                                    processing_time = data.get('processing_time', 0)
+                    
+                    st.success(f"Query completed in {processing_time:.2f} seconds")
+                    
+                    # Sources and metadata
+                    if metadata:
+                        col1, col2 = st.columns(2)
+                        
+                        with col1:
+                            st.subheader("Sources")
+                            sources = metadata.get('sources', [])
+                            unique_sources = list(set(sources))
+                            for source in unique_sources:
+                                st.write(f"📄 {source}")
+                        
+                        with col2:
+                            st.subheader("Retrieval Details")
+                            st.write(f"**Chunks used:** {metadata.get('chunks_used', 0)}")
+                            scores = metadata.get('similarity_scores', [])
+                            if scores:
+                                avg_score = sum(scores) / len(scores)
+                                st.write(f"**Average similarity:** {avg_score:.3f}")
+                                st.write(f"**Best match:** {max(scores):.3f}")
+                        
+                        # Similarity scores
+                        if metadata.get('similarity_scores'):
+                            st.subheader("Similarity Scores")
+                            for i, (score, source) in enumerate(zip(metadata['similarity_scores'], metadata['sources'])):
+                                st.write(f"Chunk {i+1}: {score:.3f} - {source}")
+                
+                except Exception as e:
+                    st.error(f"Error processing streaming response: {str(e)}")
+            else:
+                st.error("Failed to get streaming response")
         else:
-            st.error(f"Query failed: {response.get('message', 'Unknown error')}")
+            # Non-streaming mode
+            with st.spinner("Searching documents and generating answer..."):
+                start_time = time.time()
+                
+                status_code, response = query_documents(
+                    question=question,
+                    model=model,
+                    top_k=top_k,
+                    temperature=temperature,
+                    stream=False
+                )
+                
+                end_time = time.time()
+            
+            if status_code == 200:
+                st.success(f"Query completed in {response.get('processing_time', end_time - start_time):.2f} seconds")
+                
+                # Answer
+                st.subheader("Answer")
+                st.write(response['answer'])
+                
+                # Sources and metadata
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    st.subheader("Sources")
+                    sources = response.get('sources', [])
+                    unique_sources = list(set(sources))
+                    for source in unique_sources:
+                        st.write(f"📄 {source}")
+                
+                with col2:
+                    st.subheader("Retrieval Details")
+                    st.write(f"**Chunks used:** {response.get('chunks_used', 0)}")
+                    scores = response.get('similarity_scores', [])
+                    if scores:
+                        avg_score = sum(scores) / len(scores)
+                        st.write(f"**Average similarity:** {avg_score:.3f}")
+                        st.write(f"**Best match:** {max(scores):.3f}")
+                
+                # Similarity scores
+                if response.get('similarity_scores'):
+                    st.subheader("Similarity Scores")
+                    for i, (score, source) in enumerate(zip(response['similarity_scores'], response['sources'])):
+                        st.write(f"Chunk {i+1}: {score:.3f} - {source}")
+            
+            else:
+                st.error(f"Query failed: {response.get('message', 'Unknown error')}")
     
     elif submitted:
         st.error("Please enter a question!")

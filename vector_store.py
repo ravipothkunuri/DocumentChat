@@ -1,12 +1,10 @@
 import json
 import logging
-import re
 from pathlib import Path
 from typing import List, Dict, Any, Tuple, Optional
 from datetime import datetime
 import numpy as np
 from sklearn.metrics.pairwise import cosine_similarity
-from sklearn.feature_extraction.text import TfidfVectorizer
 
 logger = logging.getLogger(__name__)
 
@@ -60,14 +58,8 @@ class VectorStore:
         logger.debug(f"Added {len(documents)} documents to vector store. "
                     f"Total: {len(self.documents)} documents, {self.embeddings.shape[0]} embeddings")
     
-    def similarity_search(
-        self, 
-        query_embedding: List[float], 
-        k: int = 4,
-        source_filter: Optional[str] = None,
-        similarity_threshold: Optional[float] = None
-    ) -> List[Tuple[Dict[str, Any], float]]:
-        """Find the most similar documents to the query with optional filters."""
+    def similarity_search(self, query_embedding: List[float], k: int = 4) -> List[Tuple[Dict[str, Any], float]]:
+        """Find the most similar documents to the query."""
         if self.embeddings is None or len(self.documents) == 0:
             logger.warning("No documents in vector store for similarity search")
             return []
@@ -84,94 +76,15 @@ class VectorStore:
         # Calculate cosine similarity
         similarities = cosine_similarity(query_array, self.embeddings)[0]
         
-        # Apply filters
-        valid_indices = []
-        for idx in range(len(self.documents)):
-            # Source filter
-            if source_filter and self.documents[idx].get('metadata', {}).get('source') != source_filter:
-                continue
-            
-            # Similarity threshold filter
-            if similarity_threshold and similarities[idx] < similarity_threshold:
-                continue
-            
-            valid_indices.append(idx)
-        
-        # Sort by similarity and get top k
-        valid_indices_sorted = sorted(valid_indices, key=lambda i: similarities[i], reverse=True)[:k]
+        # Get top k indices
+        top_indices = np.argsort(similarities)[::-1][:k]
         
         # Return documents with similarity scores
         results = []
-        for idx in valid_indices_sorted:
+        for idx in top_indices:
             results.append((self.documents[idx], similarities[idx]))
         
         logger.debug(f"Similarity search returned {len(results)} results with scores: "
-                    f"{[score for _, score in results]}")
-        
-        return results
-    
-    def hybrid_search(
-        self,
-        query_text: str,
-        query_embedding: List[float],
-        k: int = 4,
-        semantic_weight: float = 0.7,
-        source_filter: Optional[str] = None,
-        similarity_threshold: Optional[float] = None
-    ) -> List[Tuple[Dict[str, Any], float]]:
-        """Hybrid search combining semantic and keyword-based search."""
-        if self.embeddings is None or len(self.documents) == 0:
-            logger.warning("No documents in vector store for hybrid search")
-            return []
-        
-        # Semantic search scores
-        query_array = np.array([query_embedding], dtype=np.float32)
-        semantic_scores = cosine_similarity(query_array, self.embeddings)[0]
-        
-        # Keyword search using TF-IDF
-        document_texts = [doc['page_content'] for doc in self.documents]
-        tfidf = TfidfVectorizer(stop_words='english', max_features=1000)
-        
-        try:
-            tfidf_matrix = tfidf.fit_transform(document_texts)
-            query_tfidf = tfidf.transform([query_text])
-            keyword_scores = cosine_similarity(query_tfidf, tfidf_matrix)[0]
-        except Exception as e:
-            logger.warning(f"TF-IDF failed, falling back to semantic only: {e}")
-            keyword_scores = np.zeros(len(document_texts))
-        
-        # Normalize scores to 0-1 range
-        if semantic_scores.max() > 0:
-            semantic_scores = semantic_scores / semantic_scores.max()
-        if keyword_scores.max() > 0:
-            keyword_scores = keyword_scores / keyword_scores.max()
-        
-        # Combine scores
-        keyword_weight = 1.0 - semantic_weight
-        combined_scores = (semantic_weight * semantic_scores) + (keyword_weight * keyword_scores)
-        
-        # Apply filters
-        valid_indices = []
-        for idx in range(len(self.documents)):
-            # Source filter
-            if source_filter and self.documents[idx].get('metadata', {}).get('source') != source_filter:
-                continue
-            
-            # Similarity threshold filter (use combined score)
-            if similarity_threshold and combined_scores[idx] < similarity_threshold:
-                continue
-            
-            valid_indices.append(idx)
-        
-        # Sort by combined score and get top k
-        valid_indices_sorted = sorted(valid_indices, key=lambda i: combined_scores[i], reverse=True)[:k]
-        
-        # Return documents with combined scores
-        results = []
-        for idx in valid_indices_sorted:
-            results.append((self.documents[idx], float(combined_scores[idx])))
-        
-        logger.debug(f"Hybrid search returned {len(results)} results with combined scores: "
                     f"{[score for _, score in results]}")
         
         return results

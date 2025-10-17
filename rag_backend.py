@@ -38,9 +38,6 @@ class QueryRequest(BaseModel):
     model: Optional[str] = Field(None, description="LLM model to use")
     top_k: int = Field(4, ge=1, le=20, description="Number of chunks to retrieve")
     temperature: Optional[float] = Field(None, ge=0.0, le=2.0, description="LLM temperature")
-    source_filter: Optional[str] = Field(None, description="Filter by document source")
-    similarity_threshold: Optional[float] = Field(None, ge=0.0, le=1.0, description="Minimum similarity score")
-    use_hybrid_search: bool = Field(False, description="Use hybrid semantic + keyword search")
     stream: bool = Field(False, description="Stream response in real-time")
 
 class QueryResponse(BaseModel):
@@ -515,6 +512,80 @@ async def upload_document(file: UploadFile = File(...)):
             detail=f"Failed to process document: {str(e)}"
         )
 
+# Async Upload endpoint
+@app.post("/upload/async", tags=["Documents"])
+async def upload_document_async(file: UploadFile = File(...), background_tasks: BackgroundTasks = None):
+    """Upload a document and process it in the background."""
+    logger.info(f"Async upload request for file: {file.filename}")
+    
+    # Validate file type
+    if not validate_file_type(file.filename):
+        logger.warning(f"Invalid file type for {file.filename}")
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported file type. Allowed types: {', '.join(ALLOWED_EXTENSIONS)}"
+        )
+    
+    # Check for duplicates
+    if file.filename in document_metadata:
+        logger.warning(f"Duplicate upload attempt for {file.filename}")
+        raise HTTPException(
+            status_code=400,
+            detail=f"Document '{file.filename}' already exists. Please delete it first or rename your file."
+        )
+    
+    file_path = UPLOAD_DIR / file.filename
+    
+    try:
+        # Save uploaded file
+        logger.debug(f"Saving file to {file_path}")
+        content = await file.read()
+        file_size = len(content)
+        
+        with open(file_path, 'wb') as f:
+            f.write(content)
+        
+        # Create metadata entry with "pending" status
+        document_metadata[file.filename] = {
+            "filename": file.filename,
+            "size": file_size,
+            "chunks": 0,
+            "status": "pending",
+            "uploaded_at": datetime.now().isoformat(),
+            "type": file_path.suffix[1:].lower()
+        }
+        save_metadata()
+        
+        # Schedule background processing
+        background_tasks.add_task(process_document_background, file.filename, file_path, file_size)
+        
+        logger.info(f"File {file.filename} uploaded successfully, processing in background")
+        
+        return {
+            "status": "pending",
+            "filename": file.filename,
+            "file_size": file_size,
+            "message": f"Document uploaded successfully. Processing in background..."
+        }
+        
+    except Exception as e:
+        logger.error(f"Error during async upload {file.filename}: {e}")
+        logger.debug(traceback.format_exc())
+        
+        # Cleanup on error
+        if file_path.exists():
+            file_path.unlink()
+        
+        # Remove from metadata if added
+        if file.filename in document_metadata:
+            del document_metadata[file.filename]
+            save_metadata()
+        
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to upload document: {str(e)}"
+        )
+
 # Query endpoint
 @app.post("/query", tags=["Query"])
 async def query_documents(request: QueryRequest):
@@ -537,24 +608,9 @@ async def query_documents(request: QueryRequest):
         embeddings_model = get_embeddings_model()
         query_embedding = embeddings_model.embed_query(request.question)
         
-        # Perform search (hybrid or semantic)
-        if request.use_hybrid_search:
-            logger.debug(f"Performing hybrid search with top_k={request.top_k}")
-            similar_docs = vector_store.hybrid_search(
-                query_text=request.question,
-                query_embedding=query_embedding,
-                k=request.top_k,
-                source_filter=request.source_filter,
-                similarity_threshold=request.similarity_threshold
-            )
-        else:
-            logger.debug(f"Performing similarity search with top_k={request.top_k}")
-            similar_docs = vector_store.similarity_search(
-                query_embedding, 
-                k=request.top_k,
-                source_filter=request.source_filter,
-                similarity_threshold=request.similarity_threshold
-            )
+        # Perform similarity search
+        logger.debug(f"Performing similarity search with top_k={request.top_k}")
+        similar_docs = vector_store.similarity_search(query_embedding, k=request.top_k)
         
         if not similar_docs:
             raise HTTPException(
