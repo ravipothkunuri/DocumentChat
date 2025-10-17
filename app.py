@@ -198,47 +198,7 @@ def rebuild_vectors():
     except requests.exceptions.RequestException as e:
         return 500, {"message": f"Connection error: {str(e)}"}
 
-# Upload modal dialog
-@st.dialog("📤 Upload Documents")
-def upload_modal():
-    st.write("Upload PDF, TXT, or DOCX files to add them to your knowledge base.")
-    
-    # File uploader
-    uploaded_files = st.file_uploader(
-        "Choose files",
-        type=['pdf', 'txt', 'docx'],
-        accept_multiple_files=True,
-        help="Supported formats: PDF, TXT, DOCX"
-    )
-    
-    if uploaded_files:
-        if st.button("Upload Files", type="primary", use_container_width=True):
-            success_count = 0
-            total_files = len(uploaded_files)
-            
-            # Progress bar
-            progress_bar = st.progress(0)
-            status_text = st.empty()
-            
-            for i, file in enumerate(uploaded_files):
-                status_text.text(f"Uploading {file.name}...")
-                
-                status_code, response = upload_file(file)
-                
-                if status_code == 200:
-                    st.success(f"✅ {file.name}: {response['message']} ({response['chunks']} chunks)")
-                    success_count += 1
-                else:
-                    st.error(f"❌ {file.name}: {response.get('message', 'Upload failed')}")
-                
-                progress_bar.progress((i + 1) / total_files)
-            
-            status_text.text(f"Upload complete: {success_count}/{total_files} files processed successfully")
-            
-            if success_count > 0:
-                st.balloons()
-                time.sleep(1)
-                st.rerun()
+# No modal needed - we'll use session state for upload UI
 
 # Settings modal dialog
 @st.dialog("⚙️ Settings")
@@ -332,12 +292,7 @@ def main():
     
     # Sidebar with documents and upload button
     with st.sidebar:
-        st.markdown('<h1 class="main-header">📚 RAG Assistant</h1>', unsafe_allow_html=True)
-        st.markdown("---")
-        
-        # Upload button
-        if st.button("📤 Upload Documents", use_container_width=True, type="primary"):
-            upload_modal()
+        st.markdown('<h1 class="main-header">📚 Document Chat</h1>', unsafe_allow_html=True)
         
         st.markdown("---")
         st.subheader("📁 Your Documents")
@@ -389,6 +344,47 @@ def main():
             if st.button("💬 Clear Chat", use_container_width=True):
                 st.session_state.chat_history = []
                 st.rerun()
+        
+        # Upload section at the bottom
+        st.markdown("---")
+        
+        # File uploader
+        uploaded_files = st.file_uploader(
+            "📤 Upload Documents",
+            type=['pdf', 'txt', 'docx'],
+            accept_multiple_files=True,
+            help="Upload PDF, TXT, or DOCX files (max 20 MB each)",
+            key="file_uploader"
+        )
+        
+        if uploaded_files:
+            if st.button("Process Files", type="primary", use_container_width=True):
+                success_count = 0
+                total_files = len(uploaded_files)
+                
+                # Progress bar
+                progress_bar = st.progress(0)
+                status_text = st.empty()
+                
+                for i, file in enumerate(uploaded_files):
+                    status_text.text(f"Uploading {file.name}...")
+                    
+                    status_code, response = upload_file(file)
+                    
+                    if status_code == 200:
+                        st.success(f"✅ {file.name}")
+                        success_count += 1
+                    else:
+                        st.error(f"❌ {file.name}: {response.get('message', 'Failed')}")
+                    
+                    progress_bar.progress((i + 1) / total_files)
+                
+                status_text.text(f"Done: {success_count}/{total_files} uploaded")
+                
+                if success_count > 0:
+                    st.balloons()
+                    time.sleep(1)
+                    st.rerun()
     
     # Settings button in top right
     col1, col2, col3 = st.columns([6, 1, 1])

@@ -112,6 +112,8 @@ VECTOR_DIR.mkdir(exist_ok=True)
 
 METADATA_FILE = VECTOR_DIR / "metadata.json"
 ALLOWED_EXTENSIONS = {'.pdf', '.txt', '.docx'}
+MAX_FILE_SIZE_MB = 20  # Maximum file size in MB
+MAX_FILE_SIZE_BYTES = MAX_FILE_SIZE_MB * 1024 * 1024
 
 def load_metadata():
     """Load document metadata from file."""
@@ -464,6 +466,13 @@ async def upload_document(file: UploadFile = File(...)):
         content = await file.read()
         file_size = len(content)
         
+        # Check file size
+        if file_size > MAX_FILE_SIZE_BYTES:
+            raise HTTPException(
+                status_code=400,
+                detail=f"File size ({file_size / (1024*1024):.1f} MB) exceeds maximum allowed size of {MAX_FILE_SIZE_MB} MB"
+            )
+        
         with open(file_path, 'wb') as f:
             f.write(content)
         
@@ -564,6 +573,13 @@ async def upload_document_async(file: UploadFile = File(...), background_tasks: 
         logger.debug(f"Saving file to {file_path}")
         content = await file.read()
         file_size = len(content)
+        
+        # Check file size
+        if file_size > MAX_FILE_SIZE_BYTES:
+            raise HTTPException(
+                status_code=400,
+                detail=f"File size ({file_size / (1024*1024):.1f} MB) exceeds maximum allowed size of {MAX_FILE_SIZE_MB} MB"
+            )
         
         with open(file_path, 'wb') as f:
             f.write(content)

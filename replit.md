@@ -1,10 +1,10 @@
-# RAG Document Assistant
+# Document Chat - RAG Application
 
 ## Overview
 
-This is a Retrieval-Augmented Generation (RAG) application that enables users to upload documents (PDF, TXT, DOCX), process them into searchable chunks, and query them using local Large Language Models through Ollama. The system consists of a FastAPI backend that handles document processing, embedding generation, and question-answering, paired with a Streamlit frontend for user interaction.
+A conversational document chat application powered by Retrieval-Augmented Generation (RAG). Users upload documents (PDF, TXT, DOCX) and chat with them as if the documents themselves are responding. The system uses local LLMs through Ollama, with a FastAPI backend for document processing and a clean Streamlit chat interface.
 
-The application uses a custom in-memory vector store with JSON persistence for storing document embeddings, eliminating the need for external vector databases. It leverages cosine similarity for semantic search and integrates with Ollama for both embedding generation (nomic-embed-text) and language model inference (llama3, mistral, phi, etc.).
+The application uses a custom in-memory vector store with JSON persistence, eliminating external database dependencies. It features streaming responses, file size limits (20 MB per document), and a document-as-conversational-agent approach where responses are personalized as if the document is speaking.
 
 ## User Preferences
 
@@ -18,11 +18,16 @@ Preferred communication style: Simple, everyday language.
 - **Alternative Considered**: Monolithic Streamlit application - rejected due to limitations in API reusability and scalability
 
 ### Frontend Layer (Streamlit)
-- **Technology Choice**: Streamlit for rapid UI development
-- **Responsibilities**: User interface, file uploads, query interface, document management
+- **Technology Choice**: Streamlit for chat-based UI
+- **UI Pattern**: Single-page chat interface with sidebar for documents
+- **Key Features**:
+  - Chat interface with message history
+  - Streaming responses with real-time display
+  - Document list in sidebar with delete functionality  
+  - Upload widget at sidebar bottom (max 20 MB per file)
+  - Settings modal for configuration
 - **Communication**: HTTP requests to FastAPI backend at `localhost:8000`
-- **Pros**: Fast prototyping, built-in components, Python-native
-- **Cons**: Limited customization compared to React/Vue frameworks
+- **Rationale**: Streamlit's chat components provide rapid development for conversational UIs
 
 ### Backend API Layer (FastAPI)
 - **RESTful Design**: Implements standard CRUD operations for document management
@@ -73,9 +78,10 @@ Preferred communication style: Simple, everyday language.
 1. **Question Embedding**: Convert user query to vector using same embedding model
 2. **Similarity Search**: Find top-k most relevant document chunks
 3. **Context Assembly**: Combine retrieved chunks into context
-4. **LLM Prompting**: Send context + question to language model
-5. **Response Generation**: Stream or return complete answer with source attribution
-6. **Metadata Tracking**: Return similarity scores, processing time, sources used
+4. **Personalized Prompting**: LLM prompted to respond as the document itself (first person)
+5. **Response Generation**: Stream response in real-time with document personality
+6. **Chat History**: Maintain conversation context in session state
+7. **Source Attribution**: Track which documents contributed to each response
 
 ### Data Persistence
 - **Vector Data**: JSON files in `vector_data/` directory
@@ -85,10 +91,11 @@ Preferred communication style: Simple, everyday language.
 
 ### Error Handling & Resilience
 - **Backend Health Checks**: `/health` endpoint for monitoring
-- **File Validation**: Type checking before processing
+- **File Validation**: Type and size checking (max 20 MB per file)
 - **Duplicate Detection**: Prevents reprocessing same filenames
 - **Graceful Degradation**: Error responses with detailed messages
 - **Resource Cleanup**: Ensures temporary files are removed on failure
+- **Security**: File size limits prevent memory exhaustion attacks
 
 ## External Dependencies
 
