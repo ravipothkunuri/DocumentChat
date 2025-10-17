@@ -198,113 +198,9 @@ def rebuild_vectors():
     except requests.exceptions.RequestException as e:
         return 500, {"message": f"Connection error: {str(e)}"}
 
-# Main app
-def main():
-    # Check backend health
-    health_status, health_data = check_backend_health()
-    
-    if not health_status:
-        st.error("🔴 Backend is not running! Please start the FastAPI backend on port 8000.")
-        st.code("python rag_backend.py")
-        return
-    
-    # Hamburger menu navigation
-    with st.sidebar:
-        st.markdown('<h1 class="main-header">📚 RAG Assistant</h1>', unsafe_allow_html=True)
-        st.markdown("---")
-        
-        # Initialize session state for page - default to Chat if documents are available
-        if 'current_page' not in st.session_state:
-            has_documents = health_data and health_data.get('document_count', 0) > 0
-            st.session_state.current_page = "💬 Chat" if has_documents else "📋 Dashboard"
-        
-        # Menu options
-        if st.button("💬 Chat", use_container_width=True):
-            st.session_state.current_page = "💬 Chat"
-        
-        if st.button("📤 Upload Documents", use_container_width=True):
-            st.session_state.current_page = "📤 Upload Documents"
-        
-        if st.button("📋 Dashboard", use_container_width=True):
-            st.session_state.current_page = "📋 Dashboard"
-        
-        if st.button("⚙️ Configuration", use_container_width=True):
-            st.session_state.current_page = "⚙️ Configuration"
-    
-    # Display selected page
-    if st.session_state.current_page == "📋 Dashboard":
-        dashboard_page(health_data)
-    elif st.session_state.current_page == "📤 Upload Documents":
-        upload_page()
-    elif st.session_state.current_page == "⚙️ Configuration":
-        config_page()
-    elif st.session_state.current_page == "💬 Chat":
-        chat_page(health_data)
-
-def dashboard_page(health_data):
-    st.header("Dashboard")
-    
-    # Health status
-    col1, col2, col3 = st.columns(3)
-    
-    with col1:
-        if health_data and health_data.get('status') == 'healthy':
-            st.markdown('<p class="status-success">🟢 System Healthy</p>', unsafe_allow_html=True)
-        else:
-            st.markdown('<p class="status-error">🔴 System Issues</p>', unsafe_allow_html=True)
-    
-    with col2:
-        if health_data:
-            doc_count = health_data.get('document_count', 0)
-            st.metric("Documents", doc_count)
-    
-    with col3:
-        if health_data:
-            query_count = health_data.get('total_queries', 0)
-            st.metric("Total Queries", query_count)
-    
-    # System information
-    if health_data:
-        st.subheader("System Information")
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            st.write("**Current Configuration:**")
-            config = health_data.get('configuration', {})
-            st.write(f"• LLM Model: {config.get('model', 'N/A')}")
-            st.write(f"• Embedding Model: {config.get('embedding_model', 'N/A')}")
-            st.write(f"• Chunk Size: {config.get('chunk_size', 'N/A')}")
-            st.write(f"• Temperature: {config.get('temperature', 'N/A')}")
-        
-        with col2:
-            st.write("**Ollama Status:**")
-            ollama_status = health_data.get('ollama_status', {})
-            if ollama_status.get('available'):
-                st.markdown('<p class="status-success">✅ Ollama Available</p>', unsafe_allow_html=True)
-            else:
-                st.markdown('<p class="status-error">❌ Ollama Issues</p>', unsafe_allow_html=True)
-    
-    # Recent documents
-    st.subheader("Recent Documents")
-    documents = get_documents()
-    if documents:
-        # Show last 5 documents
-        recent_docs = documents[-5:] if len(documents) > 5 else documents
-        for doc in reversed(recent_docs):
-            with st.expander(f"📄 {doc['filename']} ({doc['type'].upper()})"):
-                col1, col2, col3 = st.columns(3)
-                with col1:
-                    st.write(f"**Size:** {doc['size']:,} bytes")
-                with col2:
-                    st.write(f"**Chunks:** {doc['chunks']}")
-                with col3:
-                    st.write(f"**Uploaded:** {doc['uploaded_at']}")
-    else:
-        st.info("No documents uploaded yet. Go to the Upload Documents page to get started!")
-
-def upload_page():
-    st.header("Upload Documents")
-    
+# Upload modal dialog
+@st.dialog("📤 Upload Documents")
+def upload_modal():
     st.write("Upload PDF, TXT, or DOCX files to add them to your knowledge base.")
     
     # File uploader
@@ -316,7 +212,7 @@ def upload_page():
     )
     
     if uploaded_files:
-        if st.button("Upload Files", type="primary"):
+        if st.button("Upload Files", type="primary", use_container_width=True):
             success_count = 0
             total_files = len(uploaded_files)
             
@@ -341,74 +237,12 @@ def upload_page():
             
             if success_count > 0:
                 st.balloons()
-    
-    # Show current documents
-    st.subheader("Current Documents")
-    documents = get_documents()
-    
-    if documents:
-        for doc in documents:
-            with st.container():
-                col1, col2, col3, col4 = st.columns([3, 1, 1, 1])
-                
-                with col1:
-                    st.write(f"📄 **{doc['filename']}** ({doc['type'].upper()})")
-                    st.caption(f"{doc['size']:,} bytes • {doc['chunks']} chunks • {doc['uploaded_at']}")
-                
-                with col2:
-                    if st.button("👁️", key=f"preview_{doc['filename']}", help="Preview"):
-                        st.session_state[f"preview_{doc['filename']}"] = True
-                
-                with col3:
-                    if st.button("🗑️", key=f"delete_{doc['filename']}", help="Delete", type="secondary"):
-                        status_code, response = delete_document(doc['filename'])
-                        if status_code == 200:
-                            st.success(f"Deleted {doc['filename']}")
-                            st.rerun()
-                        else:
-                            st.error(f"Failed to delete: {response.get('message', 'Unknown error')}")
-                
-                # Preview functionality
-                if st.session_state.get(f"preview_{doc['filename']}", False):
-                    status_code, preview_data = preview_document(doc['filename'])
-                    if status_code == 200:
-                        st.write("**Preview:**")
-                        for chunk in preview_data.get('chunks', []):
-                            st.text_area(
-                                f"Chunk {chunk['chunk_id']} ({chunk['length']} chars)",
-                                chunk['content'],
-                                height=100,
-                                key=f"preview_chunk_{doc['filename']}_{chunk['chunk_id']}"
-                            )
-                    else:
-                        st.error("Failed to load preview")
-                    
-                    if st.button("Close Preview", key=f"close_preview_{doc['filename']}"):
-                        st.session_state[f"preview_{doc['filename']}"] = False
-                        st.rerun()
-                
-                st.divider()
-        
-        # Clear all button
-        if st.button("🗑️ Clear All Documents", type="secondary"):
-            if st.session_state.get('confirm_clear_all', False):
-                status_code, response = clear_all_documents()
-                if status_code == 200:
-                    st.success("All documents cleared!")
-                    st.session_state['confirm_clear_all'] = False
-                    st.rerun()
-                else:
-                    st.error(f"Failed to clear: {response.get('message', 'Unknown error')}")
-            else:
-                st.session_state['confirm_clear_all'] = True
-                st.warning("Click again to confirm deletion of ALL documents")
+                time.sleep(1)
                 st.rerun()
-    else:
-        st.info("No documents uploaded yet.")
 
-def config_page():
-    st.header("Configuration")
-    
+# Settings modal dialog
+@st.dialog("⚙️ Settings")
+def settings_modal():
     # Get current models and config
     models_data = get_models()
     
@@ -446,7 +280,7 @@ def config_page():
         with col3:
             temperature = st.slider("Temperature", 0.0, 2.0, 0.7, step=0.1)
         
-        submitted = st.form_submit_button("Update Configuration", type="primary")
+        submitted = st.form_submit_button("Update Configuration", type="primary", use_container_width=True)
     
     if submitted:
         config = {
@@ -485,26 +319,91 @@ def config_page():
                             st.error(f"Rebuild failed: {rebuild_response.get('message', 'Unknown error')}")
         else:
             st.error(f"Configuration update failed: {response.get('message', 'Unknown error')}")
+
+# Main app
+def main():
+    # Check backend health
+    health_status, health_data = check_backend_health()
     
-    # Current configuration display
-    st.subheader("Current Configuration")
-    current_config = {
-        "LLM Model": models_data.get('current_llm', 'N/A'),
-        "Embedding Model": models_data.get('current_embedding', 'N/A')
-    }
+    if not health_status:
+        st.error("🔴 Backend is not running! Please start the FastAPI backend on port 8000.")
+        st.code("python rag_backend.py")
+        return
     
-    for key, value in current_config.items():
-        st.write(f"**{key}:** {value}")
+    # Sidebar with documents and upload button
+    with st.sidebar:
+        st.markdown('<h1 class="main-header">📚 RAG Assistant</h1>', unsafe_allow_html=True)
+        st.markdown("---")
+        
+        # Upload button
+        if st.button("📤 Upload Documents", use_container_width=True, type="primary"):
+            upload_modal()
+        
+        st.markdown("---")
+        st.subheader("📁 Your Documents")
+        
+        # Display uploaded documents
+        documents = get_documents()
+        
+        if documents:
+            for doc in documents:
+                with st.expander(f"📄 {doc['filename']}", expanded=False):
+                    st.caption(f"**Type:** {doc['type'].upper()}")
+                    st.caption(f"**Size:** {doc['size']:,} bytes")
+                    st.caption(f"**Chunks:** {doc['chunks']}")
+                    st.caption(f"**Uploaded:** {doc['uploaded_at'][:10]}")
+                    
+                    if st.button("🗑️ Delete", key=f"delete_{doc['filename']}", use_container_width=True):
+                        status_code, response = delete_document(doc['filename'])
+                        if status_code == 200:
+                            st.success(f"Deleted {doc['filename']}")
+                            st.rerun()
+                        else:
+                            st.error(f"Failed to delete: {response.get('message', 'Unknown error')}")
+        else:
+            st.info("No documents uploaded yet. Click 'Upload Documents' to get started!")
+        
+        # Clear all documents button
+        if documents:
+            st.markdown("---")
+            if st.button("🗑️ Clear All", use_container_width=True):
+                if 'confirm_clear' not in st.session_state:
+                    st.session_state.confirm_clear = False
+                
+                if st.session_state.confirm_clear:
+                    status_code, response = clear_all_documents()
+                    if status_code == 200:
+                        st.success("All documents cleared!")
+                        st.session_state.confirm_clear = False
+                        st.rerun()
+                    else:
+                        st.error(f"Failed: {response.get('message', 'Unknown error')}")
+                else:
+                    st.session_state.confirm_clear = True
+                    st.warning("Click again to confirm")
+                    st.rerun()
+        
+        # Clear chat history button
+        if 'chat_history' in st.session_state and st.session_state.chat_history:
+            st.markdown("---")
+            if st.button("💬 Clear Chat", use_container_width=True):
+                st.session_state.chat_history = []
+                st.rerun()
+    
+    # Settings button in top right
+    col1, col2, col3 = st.columns([6, 1, 1])
+    with col3:
+        if st.button("⚙️", help="Settings"):
+            settings_modal()
+    
+    # Main chat interface
+    chat_page(health_data)
+
 
 def chat_page(health_data):
-    st.header("💬 Chat with Your Documents")
-    
     # Check if documents are available
     if health_data and health_data.get('document_count', 0) == 0:
-        st.warning("📁 No documents uploaded yet. Please upload documents first to start chatting!")
-        if st.button("Go to Upload Documents"):
-            st.session_state.current_page = "📤 Upload Documents"
-            st.rerun()
+        st.info("👋 Welcome! Upload some documents from the sidebar to start chatting with them.")
         return
     
     # Initialize chat history in session state
