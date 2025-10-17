@@ -7,8 +7,9 @@ import re
 import requests
 from datetime import datetime
 from pathlib import Path
-from typing import List, Dict, Any, Optional, AsyncGenerator, Iterator
+from typing import List, Dict, Any, Optional, AsyncGenerator, Iterator, Literal
 from contextlib import asynccontextmanager
+from enum import Enum
 
 import uvicorn
 from fastapi import FastAPI, File, UploadFile, HTTPException, Query, BackgroundTasks
@@ -36,7 +37,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Constants
-OLLAMA_BASE_URL = "http://localhost:11434"
+OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
 UPLOAD_DIR = Path("uploaded_documents")
 VECTOR_DIR = Path("vector_data")
 METADATA_FILE = VECTOR_DIR / "metadata.json"
@@ -45,10 +46,22 @@ ALLOWED_EXTENSIONS = {'.pdf', '.txt', '.docx'}
 MAX_FILE_SIZE_MB = 20
 MAX_FILE_SIZE_BYTES = MAX_FILE_SIZE_MB * 1024 * 1024
 
+
+# Model Provider Enum
+class ModelProvider(str, Enum):
+    OLLAMA = "ollama"
+    OPENAI = "openai"
+    ANTHROPIC = "anthropic"
+    GOOGLE = "google"
+    COHERE = "cohere"
+    HUGGINGFACE = "huggingface"
+
+
 # Pydantic Models
 class QueryRequest(BaseModel):
     question: str = Field(..., min_length=1, max_length=5000, description="The question to ask")
     model: Optional[str] = Field(None, description="LLM model to use")
+    provider: Optional[ModelProvider] = Field(None, description="Model provider")
     top_k: int = Field(4, ge=1, le=20, description="Number of chunks to retrieve")
     temperature: Optional[float] = Field(None, ge=0.0, le=2.0, description="LLM temperature")
     stream: bool = Field(False, description="Stream response in real-time")
@@ -60,6 +73,8 @@ class QueryResponse(BaseModel):
     chunks_used: int
     similarity_scores: List[float]
     processing_time: float
+    model_used: str
+    provider: str
 
 
 class DocumentUploadResponse(BaseModel):
@@ -72,10 +87,14 @@ class DocumentUploadResponse(BaseModel):
 
 class ModelConfig(BaseModel):
     model: Optional[str] = None
+    provider: Optional[ModelProvider] = None
     embedding_model: Optional[str] = None
+    embedding_provider: Optional[ModelProvider] = None
     chunk_size: Optional[int] = Field(None, ge=100, le=2000)
     chunk_overlap: Optional[int] = Field(None, ge=0, le=500)
     temperature: Optional[float] = Field(None, ge=0.0, le=2.0)
+    api_key: Optional[str] = None
+    api_base: Optional[str] = None
     
     @validator('chunk_overlap')
     def validate_overlap(cls, v, values):
@@ -94,8 +113,27 @@ class DocumentInfo(BaseModel):
     type: str
 
 
+# Base LLM Interface
+class BaseLLM:
+    """Base class for all LLM providers."""
+    
+    def __init__(self, model: str, temperature: float = 0.7, timeout: int = 120, **kwargs):
+        self.model = model
+        self.temperature = temperature
+        self.timeout = timeout
+        self.kwargs = kwargs
+    
+    def invoke(self, prompt: str) -> str:
+        """Invoke the model with a prompt and return the complete response."""
+        raise NotImplementedError
+    
+    def stream(self, prompt: str) -> Iterator[str]:
+        """Stream the model's response."""
+        raise NotImplementedError
+
+
 # Universal Ollama LLM with automatic endpoint detection
-class UniversalOllamaLLM:
+class OllamaLLM(BaseLLM):
     """Universal Ollama LLM client with automatic endpoint detection."""
     
     def __init__(
@@ -103,15 +141,14 @@ class UniversalOllamaLLM:
         model: str, 
         base_url: str = OLLAMA_BASE_URL,
         temperature: float = 0.7,
-        timeout: int = 120
+        timeout: int = 120,
+        **kwargs
     ):
-        self.model = model
+        super().__init__(model, temperature, timeout, **kwargs)
         self.base_url = base_url.rstrip('/')
-        self.temperature = temperature
-        self.timeout = timeout
         self.endpoint_type = None
         
-        logger.info(f"Initializing UniversalOllamaLLM with model: {model}")
+        logger.info(f"Initializing OllamaLLM with model: {model}")
     
     def _lazy_detect_endpoint(self) -> None:
         """Lazily detect which endpoint the model supports (called on first use)."""
@@ -249,17 +286,412 @@ class UniversalOllamaLLM:
             raise ValueError(f"Failed to stream from model {self.model}: {str(e)}")
 
 
-# Configuration Manager
+# OpenAI LLM
+class OpenAILLM(BaseLLM):
+    """OpenAI API compatible LLM client."""
+    
+    def __init__(
+        self,
+        model: str,
+        api_key: Optional[str] = None,
+        api_base: Optional[str] = None,
+        temperature: float = 0.7,
+        timeout: int = 120,
+        **kwargs
+    ):
+        super().__init__(model, temperature, timeout, **kwargs)
+        self.api_key = api_key or os.getenv("OPENAI_API_KEY")
+        self.api_base = (api_base or os.getenv("OPENAI_API_BASE") or "https://api.openai.com/v1").rstrip('/')
+        
+        if not self.api_key:
+            raise ValueError("OpenAI API key is required")
+        
+        logger.info(f"Initializing OpenAILLM with model: {model}")
+    
+    def _get_headers(self) -> Dict[str, str]:
+        return {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json"
+        }
+    
+    def invoke(self, prompt: str) -> str:
+        """Invoke the model with a prompt."""
+        url = f"{self.api_base}/chat/completions"
+        payload = {
+            "model": self.model,
+            "messages": [{"role": "user", "content": prompt}],
+            "temperature": self.temperature
+        }
+        
+        try:
+            response = requests.post(
+                url,
+                headers=self._get_headers(),
+                json=payload,
+                timeout=self.timeout
+            )
+            response.raise_for_status()
+            data = response.json()
+            return data["choices"][0]["message"]["content"]
+        except requests.exceptions.HTTPError as e:
+            raise ValueError(f"OpenAI API error: {str(e)}")
+        except Exception as e:
+            raise ValueError(f"Failed to communicate with OpenAI: {str(e)}")
+    
+    def stream(self, prompt: str) -> Iterator[str]:
+        """Stream the model's response."""
+        url = f"{self.api_base}/chat/completions"
+        payload = {
+            "model": self.model,
+            "messages": [{"role": "user", "content": prompt}],
+            "temperature": self.temperature,
+            "stream": True
+        }
+        
+        try:
+            response = requests.post(
+                url,
+                headers=self._get_headers(),
+                json=payload,
+                timeout=self.timeout,
+                stream=True
+            )
+            response.raise_for_status()
+            
+            for line in response.iter_lines():
+                if line:
+                    line_str = line.decode('utf-8')
+                    if line_str.startswith("data: "):
+                        data_str = line_str[6:]
+                        if data_str == "[DONE]":
+                            break
+                        try:
+                            data = json.loads(data_str)
+                            content = data["choices"][0]["delta"].get("content", "")
+                            if content:
+                                yield content
+                        except json.JSONDecodeError:
+                            continue
+        except Exception as e:
+            raise ValueError(f"Failed to stream from OpenAI: {str(e)}")
+
+
+# Anthropic LLM
+class AnthropicLLM(BaseLLM):
+    """Anthropic Claude API client."""
+    
+    def __init__(
+        self,
+        model: str,
+        api_key: Optional[str] = None,
+        temperature: float = 0.7,
+        timeout: int = 120,
+        **kwargs
+    ):
+        super().__init__(model, temperature, timeout, **kwargs)
+        self.api_key = api_key or os.getenv("ANTHROPIC_API_KEY")
+        self.api_base = "https://api.anthropic.com/v1"
+        
+        if not self.api_key:
+            raise ValueError("Anthropic API key is required")
+        
+        logger.info(f"Initializing AnthropicLLM with model: {model}")
+    
+    def _get_headers(self) -> Dict[str, str]:
+        return {
+            "x-api-key": self.api_key,
+            "anthropic-version": "2023-06-01",
+            "Content-Type": "application/json"
+        }
+    
+    def invoke(self, prompt: str) -> str:
+        """Invoke the model with a prompt."""
+        url = f"{self.api_base}/messages"
+        payload = {
+            "model": self.model,
+            "messages": [{"role": "user", "content": prompt}],
+            "temperature": self.temperature,
+            "max_tokens": 4096
+        }
+        
+        try:
+            response = requests.post(
+                url,
+                headers=self._get_headers(),
+                json=payload,
+                timeout=self.timeout
+            )
+            response.raise_for_status()
+            data = response.json()
+            return data["content"][0]["text"]
+        except requests.exceptions.HTTPError as e:
+            raise ValueError(f"Anthropic API error: {str(e)}")
+        except Exception as e:
+            raise ValueError(f"Failed to communicate with Anthropic: {str(e)}")
+    
+    def stream(self, prompt: str) -> Iterator[str]:
+        """Stream the model's response."""
+        url = f"{self.api_base}/messages"
+        payload = {
+            "model": self.model,
+            "messages": [{"role": "user", "content": prompt}],
+            "temperature": self.temperature,
+            "max_tokens": 4096,
+            "stream": True
+        }
+        
+        try:
+            response = requests.post(
+                url,
+                headers=self._get_headers(),
+                json=payload,
+                timeout=self.timeout,
+                stream=True
+            )
+            response.raise_for_status()
+            
+            for line in response.iter_lines():
+                if line:
+                    line_str = line.decode('utf-8')
+                    if line_str.startswith("data: "):
+                        data_str = line_str[6:]
+                        try:
+                            data = json.loads(data_str)
+                            if data.get("type") == "content_block_delta":
+                                content = data.get("delta", {}).get("text", "")
+                                if content:
+                                    yield content
+                        except json.JSONDecodeError:
+                            continue
+        except Exception as e:
+            raise ValueError(f"Failed to stream from Anthropic: {str(e)}")
+
+
+# Google Gemini LLM
+class GoogleLLM(BaseLLM):
+    """Google Gemini API client."""
+    
+    def __init__(
+        self,
+        model: str,
+        api_key: Optional[str] = None,
+        temperature: float = 0.7,
+        timeout: int = 120,
+        **kwargs
+    ):
+        super().__init__(model, temperature, timeout, **kwargs)
+        self.api_key = api_key or os.getenv("GOOGLE_API_KEY")
+        self.api_base = "https://generativelanguage.googleapis.com/v1beta"
+        
+        if not self.api_key:
+            raise ValueError("Google API key is required")
+        
+        logger.info(f"Initializing GoogleLLM with model: {model}")
+    
+    def invoke(self, prompt: str) -> str:
+        """Invoke the model with a prompt."""
+        url = f"{self.api_base}/models/{self.model}:generateContent?key={self.api_key}"
+        payload = {
+            "contents": [{"parts": [{"text": prompt}]}],
+            "generationConfig": {"temperature": self.temperature}
+        }
+        
+        try:
+            response = requests.post(url, json=payload, timeout=self.timeout)
+            response.raise_for_status()
+            data = response.json()
+            return data["candidates"][0]["content"]["parts"][0]["text"]
+        except requests.exceptions.HTTPError as e:
+            raise ValueError(f"Google API error: {str(e)}")
+        except Exception as e:
+            raise ValueError(f"Failed to communicate with Google: {str(e)}")
+    
+    def stream(self, prompt: str) -> Iterator[str]:
+        """Stream the model's response."""
+        url = f"{self.api_base}/models/{self.model}:streamGenerateContent?key={self.api_key}"
+        payload = {
+            "contents": [{"parts": [{"text": prompt}]}],
+            "generationConfig": {"temperature": self.temperature}
+        }
+        
+        try:
+            response = requests.post(url, json=payload, timeout=self.timeout, stream=True)
+            response.raise_for_status()
+            
+            for line in response.iter_lines():
+                if line:
+                    try:
+                        data = json.loads(line.decode('utf-8'))
+                        if "candidates" in data:
+                            content = data["candidates"][0]["content"]["parts"][0].get("text", "")
+                            if content:
+                                yield content
+                    except json.JSONDecodeError:
+                        continue
+        except Exception as e:
+            raise ValueError(f"Failed to stream from Google: {str(e)}")
+
+
+# Cohere LLM
+class CohereLLM(BaseLLM):
+    """Cohere API client."""
+    
+    def __init__(
+        self,
+        model: str,
+        api_key: Optional[str] = None,
+        temperature: float = 0.7,
+        timeout: int = 120,
+        **kwargs
+    ):
+        super().__init__(model, temperature, timeout, **kwargs)
+        self.api_key = api_key or os.getenv("COHERE_API_KEY")
+        self.api_base = "https://api.cohere.ai/v1"
+        
+        if not self.api_key:
+            raise ValueError("Cohere API key is required")
+        
+        logger.info(f"Initializing CohereLLM with model: {model}")
+    
+    def _get_headers(self) -> Dict[str, str]:
+        return {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json"
+        }
+    
+    def invoke(self, prompt: str) -> str:
+        """Invoke the model with a prompt."""
+        url = f"{self.api_base}/generate"
+        payload = {
+            "model": self.model,
+            "prompt": prompt,
+            "temperature": self.temperature
+        }
+        
+        try:
+            response = requests.post(
+                url,
+                headers=self._get_headers(),
+                json=payload,
+                timeout=self.timeout
+            )
+            response.raise_for_status()
+            data = response.json()
+            return data["generations"][0]["text"]
+        except requests.exceptions.HTTPError as e:
+            raise ValueError(f"Cohere API error: {str(e)}")
+        except Exception as e:
+            raise ValueError(f"Failed to communicate with Cohere: {str(e)}")
+    
+    def stream(self, prompt: str) -> Iterator[str]:
+        """Stream the model's response."""
+        url = f"{self.api_base}/generate"
+        payload = {
+            "model": self.model,
+            "prompt": prompt,
+            "temperature": self.temperature,
+            "stream": True
+        }
+        
+        try:
+            response = requests.post(
+                url,
+                headers=self._get_headers(),
+                json=payload,
+                timeout=self.timeout,
+                stream=True
+            )
+            response.raise_for_status()
+            
+            for line in response.iter_lines():
+                if line:
+                    try:
+                        data = json.loads(line.decode('utf-8'))
+                        if data.get("text"):
+                            yield data["text"]
+                    except json.JSONDecodeError:
+                        continue
+        except Exception as e:
+            raise ValueError(f"Failed to stream from Cohere: {str(e)}")
+
+
+# Hugging Face LLM
+class HuggingFaceLLM(BaseLLM):
+    """Hugging Face Inference API client."""
+    
+    def __init__(
+        self,
+        model: str,
+        api_key: Optional[str] = None,
+        temperature: float = 0.7,
+        timeout: int = 120,
+        **kwargs
+    ):
+        super().__init__(model, temperature, timeout, **kwargs)
+        self.api_key = api_key or os.getenv("HUGGINGFACE_API_KEY")
+        self.api_base = "https://api-inference.huggingface.co/models"
+        
+        if not self.api_key:
+            raise ValueError("Hugging Face API key is required")
+        
+        logger.info(f"Initializing HuggingFaceLLM with model: {model}")
+    
+    def _get_headers(self) -> Dict[str, str]:
+        return {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json"
+        }
+    
+    def invoke(self, prompt: str) -> str:
+        """Invoke the model with a prompt."""
+        url = f"{self.api_base}/{self.model}"
+        payload = {
+            "inputs": prompt,
+            "parameters": {"temperature": self.temperature}
+        }
+        
+        try:
+            response = requests.post(
+                url,
+                headers=self._get_headers(),
+                json=payload,
+                timeout=self.timeout
+            )
+            response.raise_for_status()
+            data = response.json()
+            
+            if isinstance(data, list) and len(data) > 0:
+                return data[0].get("generated_text", "")
+            return str(data)
+        except requests.exceptions.HTTPError as e:
+            raise ValueError(f"Hugging Face API error: {str(e)}")
+        except Exception as e:
+            raise ValueError(f"Failed to communicate with Hugging Face: {str(e)}")
+    
+    def stream(self, prompt: str) -> Iterator[str]:
+        """Stream the model's response (not widely supported, falls back to invoke)."""
+        # Most HF models don't support streaming, so we fall back to chunked response
+        result = self.invoke(prompt)
+        # Simulate streaming by yielding in chunks
+        chunk_size = 50
+        for i in range(0, len(result), chunk_size):
+            yield result[i:i + chunk_size]
+
+
+# Configuration Manager with provider support
 class ConfigManager:
     """Centralized configuration management."""
     
     DEFAULT_CONFIG = {
         'model': 'phi3',
+        'provider': 'ollama',
         'embedding_model': 'nomic-embed-text',
+        'embedding_provider': 'ollama',
         'chunk_size': 1000,
         'chunk_overlap': 200,
         'temperature': 0.7,
-        'total_queries': 0
+        'total_queries': 0,
+        'api_keys': {}
     }
     
     def __init__(self, config_file: Path = CONFIG_FILE):
@@ -274,7 +706,7 @@ class ConfigManager:
                 with open(self.config_file, 'r') as f:
                     loaded_config = json.load(f)
                 self.config.update(loaded_config)
-                logger.info(f"Loaded config: model={self.config['model']}, embedding={self.config['embedding_model']}")
+                logger.info(f"Loaded config: model={self.config['model']}, provider={self.config['provider']}")
             else:
                 logger.info("No existing config file, using defaults")
                 self.save()
@@ -295,10 +727,18 @@ class ConfigManager:
         """Update configuration and return list of changed fields."""
         changed = []
         for key, value in kwargs.items():
-            if value is not None and key in self.config:
-                if self.config[key] != value:
-                    self.config[key] = value
-                    changed.append(key)
+            if value is not None:
+                if key == 'api_key':
+                    # Store API keys separately
+                    provider = kwargs.get('provider', self.config.get('provider'))
+                    if 'api_keys' not in self.config:
+                        self.config['api_keys'] = {}
+                    self.config['api_keys'][provider] = value
+                    changed.append('api_key')
+                elif key in self.config or key in ['provider', 'embedding_provider', 'api_base']:
+                    if self.config.get(key) != value:
+                        self.config[key] = value
+                        changed.append(key)
         
         if changed:
             self.save()
@@ -308,6 +748,10 @@ class ConfigManager:
     def get(self, key: str, default=None):
         """Get configuration value."""
         return self.config.get(key, default)
+    
+    def get_api_key(self, provider: str) -> Optional[str]:
+        """Get API key for a specific provider."""
+        return self.config.get('api_keys', {}).get(provider)
     
     def increment_queries(self) -> None:
         """Increment query counter."""
@@ -377,22 +821,36 @@ class MetadataManager:
         return list(self.metadata.values())
 
 
-# Model Manager
+# Universal Model Manager
 class ModelManager:
-    """Manage LLM and embedding models."""
+    """Manage LLM and embedding models across all providers."""
+    
+    # Provider to LLM class mapping
+    PROVIDER_MAP = {
+        ModelProvider.OLLAMA: OllamaLLM,
+        ModelProvider.OPENAI: OpenAILLM,
+        ModelProvider.ANTHROPIC: AnthropicLLM,
+        ModelProvider.GOOGLE: GoogleLLM,
+        ModelProvider.COHERE: CohereLLM,
+        ModelProvider.HUGGINGFACE: HuggingFaceLLM,
+    }
     
     def __init__(self, config: ConfigManager):
         self.config = config
         self.embeddings_model: Optional[OllamaEmbeddings] = None
-        self.llm_cache: Dict[str, UniversalOllamaLLM] = {}
+        self.llm_cache: Dict[str, BaseLLM] = {}
     
     def get_embeddings_model(self) -> OllamaEmbeddings:
         """Get or create embeddings model."""
         if self.embeddings_model is None:
             model_name = self.config.get('embedding_model')
-            logger.info(f"Initializing embeddings model: {model_name}")
+            provider = self.config.get('embedding_provider', 'ollama')
+            
+            logger.info(f"Initializing embeddings model: {model_name} ({provider})")
             
             try:
+                # Currently only Ollama embeddings supported
+                # Can be extended to support OpenAI, Cohere, etc.
                 self.embeddings_model = OllamaEmbeddings(
                     model=model_name,
                     base_url=OLLAMA_BASE_URL
@@ -407,27 +865,54 @@ class ModelManager:
         
         return self.embeddings_model
     
-    def get_llm_model(self, model_name: Optional[str] = None) -> UniversalOllamaLLM:
+    def get_llm_model(
+        self, 
+        model_name: Optional[str] = None,
+        provider: Optional[ModelProvider] = None
+    ) -> BaseLLM:
         """Get or create LLM model (with caching)."""
         model_to_use = model_name or self.config.get('model')
+        provider_to_use = provider or ModelProvider(self.config.get('provider', 'ollama'))
+        
+        cache_key = f"{provider_to_use}:{model_to_use}"
         
         # Check cache
-        if model_to_use not in self.llm_cache:
-            logger.info(f"Initializing LLM model: {model_to_use}")
+        if cache_key not in self.llm_cache:
+            logger.info(f"Initializing LLM model: {model_to_use} ({provider_to_use})")
             
             try:
-                llm = UniversalOllamaLLM(
-                    model=model_to_use,
-                    temperature=self.config.get('temperature'),
-                    base_url=OLLAMA_BASE_URL
-                )
-                self.llm_cache[model_to_use] = llm
-                logger.info(f"LLM model '{model_to_use}' cached successfully")
+                llm_class = self.PROVIDER_MAP.get(provider_to_use)
+                if not llm_class:
+                    raise ValueError(f"Unsupported provider: {provider_to_use}")
+                
+                # Prepare initialization kwargs
+                init_kwargs = {
+                    'model': model_to_use,
+                    'temperature': self.config.get('temperature')
+                }
+                
+                # Add provider-specific parameters
+                if provider_to_use == ModelProvider.OLLAMA:
+                    init_kwargs['base_url'] = OLLAMA_BASE_URL
+                else:
+                    # For cloud providers, add API key
+                    api_key = self.config.get_api_key(provider_to_use.value)
+                    if api_key:
+                        init_kwargs['api_key'] = api_key
+                    
+                    # Add custom API base if configured
+                    api_base = self.config.get('api_base')
+                    if api_base and provider_to_use == ModelProvider.OPENAI:
+                        init_kwargs['api_base'] = api_base
+                
+                llm = llm_class(**init_kwargs)
+                self.llm_cache[cache_key] = llm
+                logger.info(f"LLM model '{model_to_use}' ({provider_to_use}) cached successfully")
             except Exception as e:
-                logger.error(f"Error initializing LLM model '{model_to_use}': {e}")
+                logger.error(f"Error initializing LLM model '{model_to_use}' ({provider_to_use}): {e}")
                 raise ValueError(f"Failed to initialize LLM model '{model_to_use}': {str(e)}")
         
-        return self.llm_cache[model_to_use]
+        return self.llm_cache[cache_key]
     
     def reset_embeddings_model(self) -> None:
         """Reset embeddings model."""
@@ -593,9 +1078,9 @@ async def lifespan(app: FastAPI):
 
 # Initialize FastAPI app
 app = FastAPI(
-    title="LangChain Ollama RAG Assistant API",
-    description="Production-ready RAG system with Universal Ollama LLM",
-    version="2.2.0",
+    title="Universal RAG Assistant API",
+    description="Production-ready RAG system with multi-provider LLM support",
+    version="3.0.0",
     docs_url="/docs",
     redoc_url="/redoc",
     lifespan=lifespan
@@ -621,7 +1106,7 @@ async def health_check():
         stats = vector_store.get_stats()
         
         return {
-            "status": "healthy" if ollama_available else "degraded",
+            "status": "healthy",
             "timestamp": datetime.now().isoformat(),
             "ollama_status": {
                 "available": ollama_available,
@@ -629,7 +1114,9 @@ async def health_check():
             },
             "configuration": {
                 "model": config_manager.get('model'),
+                "provider": config_manager.get('provider'),
                 "embedding_model": config_manager.get('embedding_model'),
+                "embedding_provider": config_manager.get('embedding_provider'),
                 "chunk_size": config_manager.get('chunk_size'),
                 "chunk_overlap": config_manager.get('chunk_overlap'),
                 "temperature": config_manager.get('temperature')
@@ -721,7 +1208,10 @@ async def upload_document(file: UploadFile = File(...)):
 @app.post("/query", tags=["Query"])
 async def query_documents(request: QueryRequest):
     """Query the document collection."""
-    logger.info(f"Query request: '{request.question[:50]}...' with model {request.model or config_manager.get('model')}")
+    model_info = request.model or config_manager.get('model')
+    provider_info = request.provider or config_manager.get('provider')
+    
+    logger.info(f"Query request: '{request.question[:50]}...' with {model_info} ({provider_info})")
     
     start_time = datetime.now()
     
@@ -768,7 +1258,7 @@ async def query_documents(request: QueryRequest):
         
         # Get LLM
         try:
-            llm = model_manager.get_llm_model(request.model)
+            llm = model_manager.get_llm_model(request.model, request.provider)
             if request.temperature is not None:
                 llm.temperature = request.temperature
         except ValueError as e:
@@ -796,6 +1286,8 @@ Respond naturally as the document. Your response:"""
                         "sources": sources,
                         "chunks_used": len(similar_docs),
                         "similarity_scores": similarity_scores,
+                        "model_used": llm.model,
+                        "provider": provider_info,
                         "type": "metadata"
                     }
                     yield f"data: {json.dumps(metadata)}\n\n"
@@ -837,7 +1329,9 @@ Respond naturally as the document. Your response:"""
                 sources=sources,
                 chunks_used=len(similar_docs),
                 similarity_scores=similarity_scores,
-                processing_time=processing_time
+                processing_time=processing_time,
+                model_used=llm.model,
+                provider=provider_info
             )
     
     except HTTPException:
@@ -955,10 +1449,10 @@ async def configure_system(config_update: ModelConfig):
     try:
         changed_fields = config_manager.update(**config_update.dict(exclude_none=True))
         
-        if "model" in changed_fields or "embedding_model" in changed_fields:
+        if "model" in changed_fields or "provider" in changed_fields:
             model_manager.reset_llm_cache()
         
-        if "embedding_model" in changed_fields:
+        if "embedding_model" in changed_fields or "embedding_provider" in changed_fields:
             model_manager.reset_embeddings_model()
         
         if "temperature" in changed_fields:
@@ -968,7 +1462,7 @@ async def configure_system(config_update: ModelConfig):
         
         response = {"message": "Configuration updated successfully", "changed_fields": changed_fields}
         
-        if "embedding_model" in changed_fields:
+        if "embedding_model" in changed_fields or "embedding_provider" in changed_fields:
             response["warning"] = "Embedding model changed. Consider rebuilding vectors for existing documents."
         
         return response
@@ -979,7 +1473,7 @@ async def configure_system(config_update: ModelConfig):
 
 @app.get("/models", tags=["Configuration"])
 async def get_models():
-    """Get available models and current configuration."""
+    """Get available models and providers."""
     logger.debug("Get models request")
     
     try:
@@ -991,18 +1485,32 @@ async def get_models():
             embedding_models = ["nomic-embed-text"]
         
         return {
-            "llm_models": llm_models,
-            "embedding_models": embedding_models,
-            "current_llm": config_manager.get('model'),
-            "current_embedding": config_manager.get('embedding_model')
+            "providers": [p.value for p in ModelProvider],
+            "ollama": {
+                "llm_models": llm_models,
+                "embedding_models": embedding_models,
+            },
+            "current_config": {
+                "model": config_manager.get('model'),
+                "provider": config_manager.get('provider'),
+                "embedding_model": config_manager.get('embedding_model'),
+                "embedding_provider": config_manager.get('embedding_provider')
+            }
         }
     except Exception as e:
         logger.error(f"Error getting models: {e}")
         return {
-            "llm_models": ["phi3", "llama3", "mistral"],
-            "embedding_models": ["nomic-embed-text"],
-            "current_llm": config_manager.get('model'),
-            "current_embedding": config_manager.get('embedding_model')
+            "providers": [p.value for p in ModelProvider],
+            "ollama": {
+                "llm_models": ["phi3", "llama3", "mistral"],
+                "embedding_models": ["nomic-embed-text"],
+            },
+            "current_config": {
+                "model": config_manager.get('model'),
+                "provider": config_manager.get('provider'),
+                "embedding_model": config_manager.get('embedding_model'),
+                "embedding_provider": config_manager.get('embedding_provider')
+            }
         }
 
 
@@ -1093,7 +1601,7 @@ async def rebuild_vectors():
 
 
 if __name__ == "__main__":
-    logger.info("Starting RAG Backend Server on port 8000...")
+    logger.info("Starting Universal RAG Backend Server on port 8000...")
     uvicorn.run(
         "rag_backend:app",
         host="0.0.0.0",
