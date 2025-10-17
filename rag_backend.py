@@ -6,7 +6,6 @@ from datetime import datetime
 from pathlib import Path
 from typing import List, Dict, Any, Optional
 import numpy as np
-from sklearn.metrics.pairwise import cosine_similarity
 
 import uvicorn
 from fastapi import FastAPI, File, UploadFile, HTTPException, Query, BackgroundTasks
@@ -14,9 +13,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
+# LangChain imports
 from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain_community.document_loaders import PyPDFLoader, TextLoader
-from langchain_community.document_loaders import UnstructuredWordDocumentLoader
+from langchain_community.document_loaders import PyPDFLoader, TextLoader, UnstructuredWordDocumentLoader
 from langchain_ollama import OllamaEmbeddings, ChatOllama
 
 from vector_store import VectorStore
@@ -83,8 +82,8 @@ config = Config()
 
 # Initialize FastAPI app
 app = FastAPI(
-    title="RAG Document Assistant API",
-    description="Production-ready Retrieval-Augmented Generation API with document upload, embedding generation, and intelligent querying using local Ollama LLMs",
+    title="LangChain Ollama RAG Assistant API",
+    description="Production-ready RAG system powered by LangChain, Ollama local LLMs, and custom vector store with Streamlit UI",
     version="1.0.0",
     docs_url="/docs",
     redoc_url="/redoc"
@@ -139,7 +138,7 @@ def save_metadata():
         logger.error(f"Error saving metadata: {e}")
 
 def get_embeddings_model():
-    """Get or create embeddings model."""
+    """Get or create embeddings model (LangChain)."""
     global embeddings_model
     try:
         if embeddings_model is None:
@@ -159,7 +158,7 @@ def get_embeddings_model():
         )
 
 def get_llm_model(model_name: str = None):
-    """Get or create LLM model."""
+    """Get or create LLM model (LangChain)."""
     global llm_model
     try:
         model_to_use = model_name or config.model
@@ -184,7 +183,7 @@ def validate_file_type(filename: str) -> bool:
     return Path(filename).suffix.lower() in ALLOWED_EXTENSIONS
 
 def load_document(file_path: Path) -> List[str]:
-    """Load document content based on file type."""
+    """Load document content based on file type (LangChain)."""
     try:
         suffix = file_path.suffix.lower()
         
@@ -211,7 +210,7 @@ def load_document(file_path: Path) -> List[str]:
         raise
 
 def split_text(content: List[str], filename: str) -> List[Dict[str, Any]]:
-    """Split text content into chunks."""
+    """Split text content into chunks (LangChain)."""
     try:
         # Combine all pages
         full_text = "\n\n".join(content)
@@ -246,6 +245,30 @@ def split_text(content: List[str], filename: str) -> List[Dict[str, Any]]:
     except Exception as e:
         logger.error(f"Error splitting text for {filename}: {e}")
         raise
+
+def clean_llm_response(text: str) -> str:
+    """Clean LLM response by removing reasoning tags like <think>, <reasoning>, etc."""
+    import re
+    
+    # Remove <think>...</think> tags and content
+    text = re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL | re.IGNORECASE)
+    
+    # Remove <reasoning>...</reasoning> tags and content
+    text = re.sub(r'<reasoning>.*?</reasoning>', '', text, flags=re.DOTALL | re.IGNORECASE)
+    
+    # Remove <thought>...</thought> tags and content
+    text = re.sub(r'<thought>.*?</thought>', '', text, flags=re.DOTALL | re.IGNORECASE)
+    
+    # Remove any standalone opening/closing tags that might be left
+    text = re.sub(r'</?think>', '', text, flags=re.IGNORECASE)
+    text = re.sub(r'</?reasoning>', '', text, flags=re.IGNORECASE)
+    text = re.sub(r'</?thought>', '', text, flags=re.IGNORECASE)
+    
+    # Clean up excessive whitespace/newlines
+    text = re.sub(r'\n{3,}', '\n\n', text)  # Max 2 consecutive newlines
+    text = text.strip()
+    
+    return text
 
 def check_ollama_available():
     """Check if Ollama is available and models are accessible."""
@@ -659,12 +682,41 @@ Answer:"""
                 }
                 yield f"data: {json.dumps(metadata)}\n\n"
                 
-                # Stream the answer
+                # Stream the answer - accumulate for cleaning
                 full_answer = ""
+                buffer = ""
+                in_tag = False
+                
                 for chunk in llm.stream(prompt):
                     content = chunk.content if hasattr(chunk, 'content') else str(chunk)
                     full_answer += content
-                    yield f"data: {json.dumps({'type': 'content', 'content': content})}\n\n"
+                    buffer += content
+                    
+                    # Check if we're inside a reasoning tag
+                    if '<think>' in buffer.lower() or '<reasoning>' in buffer.lower() or '<thought>' in buffer.lower():
+                        in_tag = True
+                    
+                    # If we find closing tag, clean and send buffered content
+                    if in_tag and ('</think>' in buffer.lower() or '</reasoning>' in buffer.lower() or '</thought>' in buffer.lower()):
+                        cleaned = clean_llm_response(buffer)
+                        if cleaned:
+                            yield f"data: {json.dumps({'type': 'content', 'content': cleaned})}\n\n"
+                        buffer = ""
+                        in_tag = False
+                    # If not in tag and buffer is substantial, send it
+                    elif not in_tag and len(buffer) > 50:
+                        yield f"data: {json.dumps({'type': 'content', 'content': buffer})}\n\n"
+                        buffer = ""
+                    # If not in tag and we have some content, send smaller chunks
+                    elif not in_tag and len(buffer) > 0 and '\n' in buffer:
+                        yield f"data: {json.dumps({'type': 'content', 'content': buffer})}\n\n"
+                        buffer = ""
+                
+                # Send any remaining buffer (cleaned)
+                if buffer:
+                    cleaned = clean_llm_response(buffer) if in_tag else buffer
+                    if cleaned:
+                        yield f"data: {json.dumps({'type': 'content', 'content': cleaned})}\n\n"
                 
                 # Send completion
                 processing_time = (datetime.now() - start_time).total_seconds()
@@ -683,6 +735,9 @@ Answer:"""
             # Regular response
             response = llm.invoke(prompt)
             answer = response.content if hasattr(response, 'content') else str(response)
+            
+            # Clean the answer before returning
+            answer = clean_llm_response(answer)
             
             # Calculate processing time
             processing_time = (datetime.now() - start_time).total_seconds()
@@ -1066,9 +1121,13 @@ async def rebuild_vectors():
                 documents = split_text(document_content, filename)
                 
                 # Generate embeddings
-                embeddings_model = get_embeddings_model()
+                model = get_embeddings_model()
                 texts = [doc["page_content"] for doc in documents]
-                embeddings = embeddings_model.embed_documents(texts)
+                # Generate embeddings using ollama directly
+                embeddings = []
+                for text in texts:
+                    response = ollama.embeddings(model=model, prompt=text)
+                    embeddings.append(response['embedding'])
                 
                 # Add to vector store
                 vector_store.add_documents(documents, embeddings)

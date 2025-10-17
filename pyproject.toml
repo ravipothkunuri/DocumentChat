@@ -1,7 +1,7 @@
 [project]
-name = "repl-nix-workspace"
-version = "0.1.0"
-description = "Add your description here"
+name = "langchain-ollama-rag-assistant"
+version = "1.0.0"
+description = "LangChain Ollama RAG Assistant - Production-ready RAG system with LangChain, Ollama local LLMs, and Streamlit UI"
 requires-python = ">=3.11"
 dependencies = [
     "docx2txt>=0.9",
@@ -13,7 +13,6 @@ dependencies = [
     "ollama>=0.6.0",
     "pydantic>=2.12.2",
     "pypdf>=6.1.1",
-    "python-docx>=1.2.0",
     "python-multipart>=0.0.20",
     "requests>=2.32.5",
     "scikit-learn>=1.7.2",

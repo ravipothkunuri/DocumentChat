@@ -1,16 +1,17 @@
-# RAG Document Assistant 📚
+# LangChain Ollama RAG Assistant 📚
 
-A production-ready Retrieval-Augmented Generation (RAG) application built with FastAPI and Streamlit. Upload documents, generate embeddings using local Ollama models, and query your knowledge base with intelligent, context-aware responses.
+A production-ready Retrieval-Augmented Generation (RAG) system powered by LangChain, Ollama local LLMs, and Streamlit. Upload documents, generate embeddings using local Ollama models, and query your knowledge base with intelligent, context-aware responses.
 
 ## Features
 
-- **Document Processing**: Upload PDF, TXT, and DOCX files
+- **LangChain Integration**: Built with LangChain framework for robust RAG pipeline
+- **Document Processing**: Upload PDF, TXT, and DOCX files using LangChain document loaders
 - **Local LLM Integration**: Uses Ollama models for embeddings and chat (no API keys required)
-- **Custom Vector Store**: In-memory vector database with JSON persistence
-- **Streaming Responses**: Real-time LLM output display
-- **Background Processing**: Async document upload handling
-- **Responsive Design**: Mobile-friendly UI with adaptive layout
-- **Simple & Clean**: Focused on core RAG functionality
+- **Custom Vector Store**: In-memory vector database with JSON persistence and sklearn cosine similarity
+- **Streaming Responses**: Real-time LLM output display with LangChain streaming
+- **Background Processing**: Async document upload handling with FastAPI BackgroundTasks
+- **Responsive Design**: Mobile-friendly Streamlit UI with adaptive layout
+- **Production-Ready**: Complete RAG implementation with proper error handling and logging
 
 ## Architecture
 
@@ -31,10 +32,10 @@ A production-ready Retrieval-Augmented Generation (RAG) application built with F
 - `streamlit>=1.50.0` - Frontend UI framework
 
 ### LangChain & LLM Dependencies
-- `langchain>=0.3.27` - Framework for LLM applications
-- `langchain-community>=0.3.31` - Community integrations for LangChain
-- `langchain-ollama>=0.3.10` - Ollama integration for LangChain
-- `ollama>=0.6.0` - Python client for Ollama
+- `langchain>=0.3.27` - Framework for LLM applications and RAG pipelines
+- `langchain-community>=0.3.31` - Community document loaders (PDF, TXT, DOCX)
+- `langchain-ollama>=0.3.10` - Ollama integration for embeddings and chat
+- `ollama>=0.6.0` - Python client for Ollama local LLMs
 
 ### Data Processing & Machine Learning
 - `numpy>=2.3.4` - Numerical computing library
@@ -82,9 +83,9 @@ All dependencies are managed in `pyproject.toml`. Install using:
 
 ```bash
 # Using pip
-pip install fastapi uvicorn streamlit langchain langchain-community langchain-ollama ollama numpy scikit-learn pypdf python-docx docx2txt requests python-multipart pydantic
+pip install fastapi uvicorn streamlit langchain langchain-community langchain-ollama ollama numpy scikit-learn pypdf docx2txt requests python-multipart pydantic
 
-# Or if you have uv or poetry, they'll read from pyproject.toml
+# Or if you have uv or poetry, they'll read from pyproject.toml automatically
 ```
 
 ## Running the Application

@@ -1,6 +1,6 @@
 # Dependency Documentation
 
-This document provides detailed information about all dependencies used in the RAG Document Assistant application, including their purpose and inner dependencies.
+This document provides detailed information about all dependencies used in the LangChain Ollama RAG Assistant application, including their purpose and inner dependencies.
 
 ## Direct Dependencies (from pyproject.toml)
 
