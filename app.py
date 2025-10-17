@@ -2,211 +2,372 @@ import streamlit as st
 import requests
 import json
 import time
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional, Tuple
+from dataclasses import dataclass
+from datetime import datetime
 import os
 
-# Backend API URL
-API_BASE_URL = "http://localhost:8000"
+# ============================================================================
+# CONFIGURATION
+# ============================================================================
 
-# Page config
-st.set_page_config(
-    page_title="LangChain Ollama RAG Assistant",
-    page_icon="📚",
-    layout="wide",
-    initial_sidebar_state="auto"
-)
+API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8000")
+MAX_FILE_SIZE_MB = 20
+ALLOWED_EXTENSIONS = ['pdf', 'txt', 'docx']
 
-# Custom CSS for responsive mobile-friendly styling
-st.markdown("""
-<style>
-/* Base styles */
-.main-header {
-    font-size: 2.5rem;
-    color: #1f77b4;
-    text-align: center;
-    margin-bottom: 2rem;
-}
-.status-success {
-    color: #28a745;
-    font-weight: bold;
-}
-.status-error {
-    color: #dc3545;
-    font-weight: bold;
-}
-.metric-container {
-    background-color: #f8f9fa;
-    padding: 1rem;
-    border-radius: 0.5rem;
-    margin: 0.5rem 0;
-}
+# ============================================================================
+# DATA MODELS
+# ============================================================================
 
-/* Mobile responsive styles */
-@media screen and (max-width: 768px) {
-    /* Adjust header for mobile */
+@dataclass
+class Document:
+    """Document model for better type handling"""
+    filename: str
+    type: str
+    size: int
+    chunks: int
+    uploaded_at: str
+    
+    @property
+    def size_formatted(self) -> str:
+        """Format size in human-readable format"""
+        for unit in ['B', 'KB', 'MB', 'GB']:
+            if self.size < 1024.0:
+                return f"{self.size:.1f} {unit}"
+            self.size /= 1024.0
+        return f"{self.size:.1f} TB"
+
+@dataclass
+class ChatMessage:
+    """Chat message model"""
+    role: str
+    content: str
+    sources: List[str] = None
+    timestamp: str = None
+    
+    def __post_init__(self):
+        if self.timestamp is None:
+            self.timestamp = datetime.now().isoformat()
+        if self.sources is None:
+            self.sources = []
+
+# ============================================================================
+# API CLIENT
+# ============================================================================
+
+class RAGAPIClient:
+    """Centralized API client for all backend interactions"""
+    
+    def __init__(self, base_url: str):
+        self.base_url = base_url
+        self.session = requests.Session()
+    
+    def _handle_response(self, response: requests.Response) -> Tuple[int, Dict]:
+        """Centralized response handling"""
+        try:
+            data = response.json() if response.content else {}
+            return response.status_code, data
+        except json.JSONDecodeError:
+            return response.status_code, {"message": "Invalid response from server"}
+    
+    def health_check(self) -> Tuple[bool, Optional[Dict]]:
+        """Check backend health"""
+        try:
+            response = self.session.get(f"{self.base_url}/health", timeout=5)
+            return response.status_code == 200, response.json() if response.ok else None
+        except requests.exceptions.RequestException:
+            return False, None
+    
+    def get_models(self) -> Dict:
+        """Get available models"""
+        try:
+            response = self.session.get(f"{self.base_url}/models", timeout=10)
+            if response.ok:
+                return response.json()
+        except requests.exceptions.RequestException:
+            pass
+        return {
+            "llm_models": [], 
+            "embedding_models": [], 
+            "current_llm": "llama3", 
+            "current_embedding": "nomic-embed-text"
+        }
+    
+    def get_documents(self) -> List[Dict]:
+        """Get list of uploaded documents"""
+        try:
+            response = self.session.get(f"{self.base_url}/documents", timeout=10)
+            if response.ok:
+                return response.json()
+        except requests.exceptions.RequestException:
+            pass
+        return []
+    
+    def upload_file(self, file) -> Tuple[int, Dict]:
+        """Upload a file to the backend"""
+        try:
+            files = {"file": (file.name, file, file.type)}
+            response = self.session.post(
+                f"{self.base_url}/upload", 
+                files=files, 
+                timeout=60
+            )
+            return self._handle_response(response)
+        except requests.exceptions.RequestException as e:
+            return 500, {"message": f"Connection error: {str(e)}"}
+    
+    def delete_document(self, filename: str) -> Tuple[int, Dict]:
+        """Delete a specific document"""
+        try:
+            response = self.session.delete(
+                f"{self.base_url}/documents/{filename}", 
+                timeout=30
+            )
+            return self._handle_response(response)
+        except requests.exceptions.RequestException as e:
+            return 500, {"message": f"Connection error: {str(e)}"}
+    
+    def clear_all_documents(self) -> Tuple[int, Dict]:
+        """Clear all documents"""
+        try:
+            response = self.session.delete(f"{self.base_url}/clear", timeout=30)
+            return self._handle_response(response)
+        except requests.exceptions.RequestException as e:
+            return 500, {"message": f"Connection error: {str(e)}"}
+    
+    def configure_system(self, config: Dict) -> Tuple[int, Dict]:
+        """Update system configuration"""
+        try:
+            response = self.session.post(
+                f"{self.base_url}/configure", 
+                json=config, 
+                timeout=30
+            )
+            return self._handle_response(response)
+        except requests.exceptions.RequestException as e:
+            return 500, {"message": f"Connection error: {str(e)}"}
+    
+    def rebuild_vectors(self) -> Tuple[int, Dict]:
+        """Rebuild vector store"""
+        try:
+            response = self.session.post(
+                f"{self.base_url}/rebuild-vectors", 
+                timeout=120
+            )
+            return self._handle_response(response)
+        except requests.exceptions.RequestException as e:
+            return 500, {"message": f"Connection error: {str(e)}"}
+    
+    def query_stream(self, question: str, top_k: int = 4):
+        """Stream query response"""
+        try:
+            response = self.session.post(
+                f"{self.base_url}/query",
+                json={"question": question, "stream": True, "top_k": top_k},
+                stream=True,
+                timeout=60
+            )
+            
+            if response.status_code == 200:
+                for line in response.iter_lines():
+                    if line:
+                        line_text = line.decode('utf-8')
+                        if line_text.startswith('data: '):
+                            yield json.loads(line_text[6:])
+            else:
+                yield {"type": "error", "message": "Query failed"}
+        except Exception as e:
+            yield {"type": "error", "message": str(e)}
+
+# ============================================================================
+# UI STYLING
+# ============================================================================
+
+def apply_custom_css():
+    """Apply custom CSS for better UI"""
+    st.markdown("""
+    <style>
+    /* Base theme improvements */
     .main-header {
-        font-size: 1.8rem;
+        font-size: 2.5rem;
+        font-weight: 700;
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        text-align: center;
         margin-bottom: 1rem;
     }
     
-    /* Make buttons full width on mobile */
-    .stButton button {
-        width: 100% !important;
-        margin: 0.25rem 0 !important;
+    /* Status indicators */
+    .status-badge {
+        display: inline-block;
+        padding: 0.25rem 0.75rem;
+        border-radius: 1rem;
+        font-size: 0.85rem;
+        font-weight: 600;
     }
     
-    /* Stack columns vertically on mobile */
-    .row-widget.stHorizontalBlock {
-        flex-direction: column !important;
+    .status-success {
+        background-color: #d4edda;
+        color: #155724;
     }
     
-    /* Better text input sizing */
-    .stTextInput, .stTextArea {
-        width: 100% !important;
+    .status-error {
+        background-color: #f8d7da;
+        color: #721c24;
     }
     
-    /* Adjust metrics display */
-    div[data-testid="metric-container"] {
-        min-width: 100% !important;
-        margin-bottom: 1rem;
+    /* Document cards */
+    .doc-card {
+        background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
+        padding: 1rem;
+        border-radius: 0.75rem;
+        margin: 0.5rem 0;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
     }
     
-    /* Better file uploader */
-    .stFileUploader {
-        width: 100% !important;
+    /* Chat improvements */
+    .stChatMessage {
+        background-color: transparent;
     }
     
-    /* Sidebar adjustments */
-    section[data-testid="stSidebar"] {
-        width: 100% !important;
+    /* Mobile responsive styles */
+    @media screen and (max-width: 768px) {
+        .main-header {
+            font-size: 1.8rem;
+            margin-bottom: 1rem;
+        }
+        
+        .stButton button {
+            width: 100% !important;
+            margin: 0.25rem 0 !important;
+            min-height: 44px !important;
+            padding: 0.75rem 1rem !important;
+        }
+        
+        .row-widget.stHorizontalBlock {
+            flex-direction: column !important;
+        }
+        
+        .stTextInput, .stTextArea, .stFileUploader {
+            width: 100% !important;
+        }
+        
+        div[data-testid="metric-container"] {
+            min-width: 100% !important;
+            margin-bottom: 1rem;
+        }
+        
+        section[data-testid="stSidebar"] {
+            width: 100% !important;
+        }
+        
+        .stSelectbox, .stSlider, .stNumberInput {
+            width: 100% !important;
+            margin-bottom: 1rem !important;
+        }
     }
     
-    /* Form elements */
-    .stSelectbox, .stSlider, .stNumberInput {
-        width: 100% !important;
-        margin-bottom: 1rem !important;
+    /* Tablet styles */
+    @media screen and (min-width: 769px) and (max-width: 1024px) {
+        .main-header {
+            font-size: 2rem;
+        }
+        
+        div[data-testid="column"] {
+            padding: 0 0.5rem !important;
+        }
     }
     
-    /* Expander full width */
-    .streamlit-expanderHeader {
-        width: 100% !important;
-    }
-}
-
-/* Tablet responsive styles */
-@media screen and (min-width: 769px) and (max-width: 1024px) {
-    .main-header {
-        font-size: 2rem;
+    /* Touch-friendly sizing */
+    @media (hover: none) and (pointer: coarse) {
+        button, a, input, select {
+            min-height: 44px;
+        }
     }
     
-    div[data-testid="column"] {
-        padding: 0 0.5rem !important;
-    }
-}
+    /* Hide Streamlit branding */
+    #MainMenu {visibility: hidden;}
+    footer {visibility: hidden;}
+    </style>
+    """, unsafe_allow_html=True)
 
-/* Touch-friendly button sizing */
-@media (hover: none) and (pointer: coarse) {
-    .stButton button {
-        min-height: 44px !important;
-        padding: 0.75rem 1rem !important;
-    }
+# ============================================================================
+# UI COMPONENTS
+# ============================================================================
+
+class UIComponents:
+    """Reusable UI components"""
     
-    /* Larger tap targets for mobile */
-    button, a, input, select {
-        min-height: 44px;
-    }
-}
-</style>
-""", unsafe_allow_html=True)
-
-def check_backend_health():
-    """Check if the backend is running and healthy."""
-    try:
-        response = requests.get(f"{API_BASE_URL}/health", timeout=5)
-        return response.status_code == 200, response.json() if response.status_code == 200 else None
-    except requests.exceptions.RequestException:
-        return False, None
-
-def get_models():
-    """Get available models from backend."""
-    try:
-        response = requests.get(f"{API_BASE_URL}/models", timeout=10)
-        if response.status_code == 200:
-            return response.json()
-        return {"llm_models": [], "embedding_models": [], "current_llm": "llama3", "current_embedding": "nomic-embed-text"}
-    except requests.exceptions.RequestException:
-        return {"llm_models": [], "embedding_models": [], "current_llm": "llama3", "current_embedding": "nomic-embed-text"}
-
-def get_documents():
-    """Get list of uploaded documents."""
-    try:
-        response = requests.get(f"{API_BASE_URL}/documents", timeout=10)
-        if response.status_code == 200:
-            return response.json()
-        return []
-    except requests.exceptions.RequestException:
-        return []
-
-
-def upload_file(file):
-    """Upload a file to the backend."""
-    try:
-        files = {"file": (file.name, file, file.type)}
-        response = requests.post(f"{API_BASE_URL}/upload", files=files, timeout=60)
-        return response.status_code, response.json() if response.status_code in [200, 400] else {"message": "Upload failed"}
-    except requests.exceptions.RequestException as e:
-        return 500, {"message": f"Connection error: {str(e)}"}
-
-
-def delete_document(filename):
-    """Delete a specific document."""
-    try:
-        response = requests.delete(f"{API_BASE_URL}/documents/{filename}", timeout=30)
-        return response.status_code, response.json() if response.status_code in [200, 404] else {"message": "Delete failed"}
-    except requests.exceptions.RequestException as e:
-        return 500, {"message": f"Connection error: {str(e)}"}
-
-def clear_all_documents():
-    """Clear all documents."""
-    try:
-        response = requests.delete(f"{API_BASE_URL}/clear", timeout=30)
-        return response.status_code, response.json() if response.status_code == 200 else {"message": "Clear failed"}
-    except requests.exceptions.RequestException as e:
-        return 500, {"message": f"Connection error: {str(e)}"}
-
-def configure_system(config):
-    """Update system configuration."""
-    try:
-        response = requests.post(f"{API_BASE_URL}/configure", json=config, timeout=30)
-        return response.status_code, response.json() if response.status_code in [200, 400] else {"message": "Configuration failed"}
-    except requests.exceptions.RequestException as e:
-        return 500, {"message": f"Connection error: {str(e)}"}
-
-def preview_document(filename, num_chunks=3):
-    """Preview document chunks."""
-    try:
-        response = requests.get(f"{API_BASE_URL}/documents/{filename}/preview", params={"num_chunks": num_chunks}, timeout=30)
-        return response.status_code, response.json() if response.status_code in [200, 404] else {"message": "Preview failed"}
-    except requests.exceptions.RequestException as e:
-        return 500, {"message": f"Connection error: {str(e)}"}
-
-def rebuild_vectors():
-    """Rebuild vector store."""
-    try:
-        response = requests.post(f"{API_BASE_URL}/rebuild-vectors", timeout=120)
-        return response.status_code, response.json() if response.status_code == 200 else {"message": "Rebuild failed"}
-    except requests.exceptions.RequestException as e:
-        return 500, {"message": f"Connection error: {str(e)}"}
-
-# No modal needed - we'll use session state for upload UI
-
-# Settings modal dialog
-@st.dialog("⚙️ Settings")
-def settings_modal():
-    # Get current models and config
-    models_data = get_models()
+    @staticmethod
+    def render_document_card(doc: Dict, api_client: RAGAPIClient):
+        """Render a document card with actions"""
+        with st.expander(f"📄 {doc['filename']}", expanded=False):
+            col1, col2 = st.columns([3, 1])
+            
+            with col1:
+                st.caption(f"**Type:** {doc['type'].upper()}")
+                st.caption(f"**Size:** {doc['size']:,} bytes")
+                st.caption(f"**Chunks:** {doc['chunks']}")
+                st.caption(f"**Uploaded:** {doc['uploaded_at'][:19]}")
+            
+            with col2:
+                if st.button("🗑️", key=f"delete_{doc['filename']}", 
+                           help="Delete document", use_container_width=True):
+                    status_code, response = api_client.delete_document(doc['filename'])
+                    if status_code == 200:
+                        st.success(f"✅ Deleted")
+                        time.sleep(0.5)
+                        st.rerun()
+                    else:
+                        st.error(f"❌ {response.get('message', 'Failed')}")
     
-    st.subheader("Model Configuration")
+    @staticmethod
+    def render_metrics_dashboard(health_data: Dict):
+        """Render system metrics dashboard"""
+        if not health_data:
+            return
+        
+        col1, col2, col3, col4 = st.columns(4)
+        
+        with col1:
+            st.metric(
+                "📚 Documents", 
+                health_data.get('document_count', 0),
+                help="Total documents uploaded"
+            )
+        
+        with col2:
+            st.metric(
+                "🧩 Chunks", 
+                health_data.get('total_chunks', 0),
+                help="Total text chunks indexed"
+            )
+        
+        with col3:
+            st.metric(
+                "🤖 LLM", 
+                health_data.get('current_model', 'N/A'),
+                help="Current language model"
+            )
+        
+        with col4:
+            st.metric(
+                "🔢 Embeddings", 
+                health_data.get('embedding_model', 'N/A'),
+                help="Current embedding model"
+            )
+
+# ============================================================================
+# DIALOGS
+# ============================================================================
+
+@st.dialog("⚙️ System Settings")
+def settings_dialog(api_client: RAGAPIClient):
+    """Settings modal dialog"""
+    models_data = api_client.get_models()
+    
+    st.subheader("🤖 Model Configuration")
     
     with st.form("config_form"):
         col1, col2 = st.columns(2)
@@ -216,7 +377,7 @@ def settings_modal():
                 "LLM Model",
                 options=models_data.get('llm_models', ['llama3']),
                 index=0,
-                help="Model used for generating answers"
+                help="Model for generating answers"
             )
         
         with col2:
@@ -224,23 +385,62 @@ def settings_modal():
                 "Embedding Model",
                 options=models_data.get('embedding_models', ['nomic-embed-text']),
                 index=0,
-                help="Model used for generating document embeddings"
+                help="Model for document embeddings"
             )
         
-        st.subheader("Text Processing")
+        st.subheader("📝 Text Processing")
         
-        col1, col2, col3 = st.columns(3)
+        col1, col2 = st.columns(2)
         
         with col1:
-            chunk_size = st.number_input("Chunk Size", min_value=100, max_value=2000, value=1000, step=50)
+            chunk_size = st.number_input(
+                "Chunk Size", 
+                min_value=100, 
+                max_value=2000, 
+                value=1000, 
+                step=50,
+                help="Size of text chunks for processing"
+            )
+            
+            temperature = st.slider(
+                "Temperature", 
+                0.0, 
+                2.0, 
+                0.7, 
+                step=0.1,
+                help="Controls response randomness"
+            )
         
         with col2:
-            chunk_overlap = st.number_input("Chunk Overlap", min_value=0, max_value=500, value=200, step=25)
+            chunk_overlap = st.number_input(
+                "Chunk Overlap", 
+                min_value=0, 
+                max_value=500, 
+                value=200, 
+                step=25,
+                help="Overlap between consecutive chunks"
+            )
+            
+            top_k = st.number_input(
+                "Top K Results",
+                min_value=1,
+                max_value=10,
+                value=4,
+                help="Number of relevant chunks to retrieve"
+            )
         
-        with col3:
-            temperature = st.slider("Temperature", 0.0, 2.0, 0.7, step=0.1)
-        
-        submitted = st.form_submit_button("Update Configuration", type="primary", use_container_width=True)
+        col1, col2 = st.columns([1, 1])
+        with col1:
+            submitted = st.form_submit_button(
+                "💾 Update Configuration", 
+                type="primary", 
+                use_container_width=True
+            )
+        with col2:
+            reset = st.form_submit_button(
+                "🔄 Reset to Defaults",
+                use_container_width=True
+            )
     
     if submitted:
         config = {
@@ -251,24 +451,25 @@ def settings_modal():
             "temperature": temperature
         }
         
-        status_code, response = configure_system(config)
+        with st.spinner("Updating configuration..."):
+            status_code, response = api_client.configure_system(config)
         
         if status_code == 200:
-            st.success("Configuration updated successfully!")
+            st.success("✅ Configuration updated successfully!")
             
             changed_fields = response.get('changed_fields', [])
             if changed_fields:
-                st.info(f"Changed fields: {', '.join(changed_fields)}")
+                st.info(f"📝 Changed: {', '.join(changed_fields)}")
             
             if 'embedding_model' in changed_fields:
-                st.warning("⚠️ Embedding model changed! You may need to rebuild vectors for existing documents.")
+                st.warning("⚠️ Embedding model changed! Rebuild vectors for existing documents.")
                 
-                if st.button("🔄 Rebuild Vectors Now"):
+                if st.button("🔄 Rebuild Vectors Now", use_container_width=True):
                     with st.spinner("Rebuilding vectors..."):
-                        rebuild_status, rebuild_response = rebuild_vectors()
+                        rebuild_status, rebuild_response = api_client.rebuild_vectors()
                         
                         if rebuild_status == 200:
-                            st.success("Vectors rebuilt successfully!")
+                            st.success("✅ Vectors rebuilt successfully!")
                             results = rebuild_response.get('results', {})
                             for filename, result in results.items():
                                 if result['success']:
@@ -276,133 +477,155 @@ def settings_modal():
                                 else:
                                     st.write(f"❌ {filename}: {result['error']}")
                         else:
-                            st.error(f"Rebuild failed: {rebuild_response.get('message', 'Unknown error')}")
+                            st.error(f"❌ {rebuild_response.get('message', 'Unknown error')}")
+            
+            time.sleep(1)
+            st.rerun()
         else:
-            st.error(f"Configuration update failed: {response.get('message', 'Unknown error')}")
+            st.error(f"❌ {response.get('message', 'Configuration update failed')}")
+    
+    if reset:
+        st.info("Reset functionality would restore default values")
+        st.rerun()
 
-# Main app
-def main():
-    # Check backend health
-    health_status, health_data = check_backend_health()
-    
-    if not health_status:
-        st.error("🔴 Backend is not running! Please start the FastAPI backend on port 8000.")
-        st.code("python rag_backend.py")
-        return
-    
-    # Sidebar with documents and upload button
+# ============================================================================
+# SIDEBAR
+# ============================================================================
+
+def render_sidebar(api_client: RAGAPIClient):
+    """Render sidebar with document management"""
     with st.sidebar:
-        st.markdown('<h1 class="main-header">📚 Document Chat</h1>', unsafe_allow_html=True)
+        st.markdown('<h1 class="main-header">📚 RAG Assistant</h1>', unsafe_allow_html=True)
+        
+        # Quick stats
+        documents = api_client.get_documents()
+        if documents:
+            st.info(f"📊 {len(documents)} document(s) loaded")
         
         st.markdown("---")
-        st.subheader("📁 Your Documents")
         
-        # Display uploaded documents
-        documents = get_documents()
+        # Document list
+        st.subheader("📁 Your Documents")
         
         if documents:
             for doc in documents:
-                with st.expander(f"📄 {doc['filename']}", expanded=False):
-                    st.caption(f"**Type:** {doc['type'].upper()}")
-                    st.caption(f"**Size:** {doc['size']:,} bytes")
-                    st.caption(f"**Chunks:** {doc['chunks']}")
-                    st.caption(f"**Uploaded:** {doc['uploaded_at'][:10]}")
-                    
-                    if st.button("🗑️ Delete", key=f"delete_{doc['filename']}", use_container_width=True):
-                        status_code, response = delete_document(doc['filename'])
+                UIComponents.render_document_card(doc, api_client)
+            
+            # Bulk actions
+            st.markdown("---")
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                if st.button("🗑️ Clear All", use_container_width=True, type="secondary"):
+                    if st.session_state.get('confirm_clear', False):
+                        with st.spinner("Clearing..."):
+                            status_code, response = api_client.clear_all_documents()
                         if status_code == 200:
-                            st.success(f"Deleted {doc['filename']}")
+                            st.success("✅ Cleared!")
+                            st.session_state.confirm_clear = False
+                            time.sleep(0.5)
                             st.rerun()
                         else:
-                            st.error(f"Failed to delete: {response.get('message', 'Unknown error')}")
-        else:
-            st.info("No documents uploaded yet. Click 'Upload Documents' to get started!")
-        
-        # Clear all documents button
-        if documents:
-            st.markdown("---")
-            if st.button("🗑️ Clear All", use_container_width=True):
-                if 'confirm_clear' not in st.session_state:
-                    st.session_state.confirm_clear = False
-                
-                if st.session_state.confirm_clear:
-                    status_code, response = clear_all_documents()
+                            st.error(f"❌ {response.get('message')}")
+                    else:
+                        st.session_state.confirm_clear = True
+                        st.warning("⚠️ Click again to confirm")
+            
+            with col2:
+                if st.button("🔄 Rebuild", use_container_width=True):
+                    with st.spinner("Rebuilding..."):
+                        status_code, response = api_client.rebuild_vectors()
                     if status_code == 200:
-                        st.success("All documents cleared!")
-                        st.session_state.confirm_clear = False
+                        st.success("✅ Done!")
+                        time.sleep(0.5)
                         st.rerun()
                     else:
-                        st.error(f"Failed: {response.get('message', 'Unknown error')}")
-                else:
-                    st.session_state.confirm_clear = True
-                    st.warning("Click again to confirm")
-                    st.rerun()
-        
-        # Clear chat history button
-        if 'chat_history' in st.session_state and st.session_state.chat_history:
-            st.markdown("---")
-            if st.button("💬 Clear Chat", use_container_width=True):
-                st.session_state.chat_history = []
-                st.rerun()
-        
-        # Upload section at the bottom
-        st.markdown("---")
+                        st.error("❌ Failed")
+        else:
+            st.info("💡 No documents yet. Upload below to get started!")
         
         # File uploader
+        st.markdown("---")
+        st.subheader("📤 Upload Documents")
+        
         uploaded_files = st.file_uploader(
-            "📤 Upload Documents",
-            type=['pdf', 'txt', 'docx'],
+            "Choose files",
+            type=ALLOWED_EXTENSIONS,
             accept_multiple_files=True,
-            help="Upload PDF, TXT, or DOCX files (max 20 MB each)",
+            help=f"Supported: {', '.join(ALLOWED_EXTENSIONS).upper()} (max {MAX_FILE_SIZE_MB}MB each)",
             key="file_uploader"
         )
         
         if uploaded_files:
-            if st.button("Process Files", type="primary", use_container_width=True):
-                success_count = 0
-                total_files = len(uploaded_files)
-                
-                # Progress bar
-                progress_bar = st.progress(0)
-                status_text = st.empty()
-                
-                for i, file in enumerate(uploaded_files):
-                    status_text.text(f"Uploading {file.name}...")
-                    
-                    status_code, response = upload_file(file)
-                    
-                    if status_code == 200:
-                        st.success(f"✅ {file.name}")
-                        success_count += 1
-                    else:
-                        st.error(f"❌ {file.name}: {response.get('message', 'Failed')}")
-                    
-                    progress_bar.progress((i + 1) / total_files)
-                
-                status_text.text(f"Done: {success_count}/{total_files} uploaded")
-                
-                if success_count > 0:
-                    st.balloons()
-                    time.sleep(1)
-                    st.rerun()
-    
-    # Settings button in top right
-    col1, col2, col3 = st.columns([6, 1, 1])
-    with col3:
-        if st.button("⚙️", help="Settings"):
-            settings_modal()
-    
-    # Main chat interface
-    chat_page(health_data)
+            if st.button("🚀 Process Files", type="primary", use_container_width=True):
+                upload_files(uploaded_files, api_client)
+        
+        # Clear chat
+        if st.session_state.get('chat_history') and st.session_state.chat_history:
+            st.markdown("---")
+            if st.button("💬 Clear Chat", use_container_width=True):
+                st.session_state.chat_history = []
+                st.rerun()
 
+def upload_files(files: List, api_client: RAGAPIClient):
+    """Handle file upload with progress tracking"""
+    success_count = 0
+    total_files = len(files)
+    
+    progress_bar = st.progress(0)
+    status_text = st.empty()
+    
+    for i, file in enumerate(files):
+        status_text.text(f"⏳ Uploading {file.name}...")
+        
+        status_code, response = api_client.upload_file(file)
+        
+        if status_code == 200:
+            st.success(f"✅ {file.name}")
+            success_count += 1
+        else:
+            st.error(f"❌ {file.name}: {response.get('message', 'Failed')}")
+        
+        progress_bar.progress((i + 1) / total_files)
+    
+    status_text.text(f"✨ Complete: {success_count}/{total_files} uploaded")
+    
+    if success_count > 0:
+        st.balloons()
+        time.sleep(1.5)
+        st.rerun()
 
-def chat_page(health_data):
-    # Check if documents are available
+# ============================================================================
+# CHAT INTERFACE
+# ============================================================================
+
+def render_chat_interface(api_client: RAGAPIClient, health_data: Dict):
+    """Render main chat interface"""
+    
+    # Check if documents exist
     if health_data and health_data.get('document_count', 0) == 0:
-        st.info("👋 Welcome! Upload some documents from the sidebar to start chatting with them.")
+        st.info("👋 **Welcome!** Upload documents from the sidebar to start chatting.")
+        
+        # Show quick start guide
+        with st.expander("📖 Quick Start Guide", expanded=True):
+            st.markdown("""
+            ### Getting Started
+            
+            1. **Upload Documents** 📤  
+               Click the sidebar and upload PDF, TXT, or DOCX files
+            
+            2. **Ask Questions** 💬  
+               Type your question in the chat input below
+            
+            3. **Get Answers** 🎯  
+               Receive AI-powered answers with source citations
+            
+            4. **Configure Settings** ⚙️  
+               Click the settings button to customize models and parameters
+            """)
         return
     
-    # Initialize chat history in session state
+    # Initialize chat history
     if 'chat_history' not in st.session_state:
         st.session_state.chat_history = []
     
@@ -412,90 +635,134 @@ def chat_page(health_data):
         for message in st.session_state.chat_history:
             with st.chat_message(message["role"]):
                 st.markdown(message["content"])
-                if message["role"] == "assistant" and "sources" in message:
-                    with st.expander("📚 Sources"):
-                        st.write(", ".join(set(message["sources"])))
+                
+                if message["role"] == "assistant" and message.get("sources"):
+                    with st.expander("📚 View Sources"):
+                        unique_sources = list(set(message["sources"]))
+                        for i, source in enumerate(unique_sources, 1):
+                            st.markdown(f"{i}. `{source}`")
     
     # Chat input
-    if prompt := st.chat_input("Ask your documents anything..."):
-        # Add user message to chat history
-        st.session_state.chat_history.append({"role": "user", "content": prompt})
-        
-        # Display user message
-        with st.chat_message("user"):
-            st.markdown(prompt)
-        
-        # Get response from backend with streaming
-        with st.chat_message("assistant"):
-            message_placeholder = st.empty()
-            full_response = ""
-            sources = []
-            
-            try:
-                # Make streaming request to backend
-                import requests
-                response = requests.post(
-                    f"{API_BASE_URL}/query",
-                    json={
-                        "question": prompt,
-                        "stream": True,
-                        "top_k": 4
-                    },
-                    stream=True,
-                    timeout=60
-                )
-                
-                if response.status_code == 200:
-                    for line in response.iter_lines():
-                        if line:
-                            line_text = line.decode('utf-8')
-                            if line_text.startswith('data: '):
-                                data = json.loads(line_text[6:])
-                                
-                                if data.get('type') == 'metadata':
-                                    sources = data.get('sources', [])
-                                elif data.get('type') == 'content':
-                                    full_response += data.get('content', '')
-                                    message_placeholder.markdown(full_response + "▌")
-                                elif data.get('type') == 'done':
-                                    message_placeholder.markdown(full_response)
-                    
-                    # Add assistant response to chat history
-                    st.session_state.chat_history.append({
-                        "role": "assistant",
-                        "content": full_response,
-                        "sources": sources
-                    })
-                    
-                    # Show sources
-                    if sources:
-                        with st.expander("📚 Sources"):
-                            st.write(", ".join(set(sources)))
-                else:
-                    error_msg = "Sorry, I couldn't process your question. Please try again."
-                    message_placeholder.error(error_msg)
-                    st.session_state.chat_history.append({
-                        "role": "assistant",
-                        "content": error_msg,
-                        "sources": []
-                    })
-            
-            except Exception as e:
-                error_msg = f"Error: {str(e)}"
-                message_placeholder.error(error_msg)
-                st.session_state.chat_history.append({
-                    "role": "assistant",
-                    "content": error_msg,
-                    "sources": []
-                })
-    
-    # Clear chat button in sidebar
-    with st.sidebar:
-        st.markdown("---")
-        if st.button("🗑️ Clear Chat History", use_container_width=True):
-            st.session_state.chat_history = []
-            st.rerun()
+    if prompt := st.chat_input("💭 Ask your documents anything...", key="chat_input"):
+        handle_chat_input(prompt, api_client)
 
-# Run the app
+def handle_chat_input(prompt: str, api_client: RAGAPIClient):
+    """Handle user chat input"""
+    # Add user message
+    st.session_state.chat_history.append({
+        "role": "user",
+        "content": prompt,
+        "timestamp": datetime.now().isoformat()
+    })
+    
+    # Display user message
+    with st.chat_message("user"):
+        st.markdown(prompt)
+    
+    # Get AI response with streaming
+    with st.chat_message("assistant"):
+        message_placeholder = st.empty()
+        full_response = ""
+        sources = []
+        
+        try:
+            for data in api_client.query_stream(prompt):
+                if data.get('type') == 'metadata':
+                    sources = data.get('sources', [])
+                elif data.get('type') == 'content':
+                    full_response += data.get('content', '')
+                    message_placeholder.markdown(full_response + "▌")
+                elif data.get('type') == 'done':
+                    message_placeholder.markdown(full_response)
+                elif data.get('type') == 'error':
+                    error_msg = f"❌ Error: {data.get('message', 'Unknown error')}"
+                    message_placeholder.error(error_msg)
+                    full_response = error_msg
+            
+            # Add to history
+            st.session_state.chat_history.append({
+                "role": "assistant",
+                "content": full_response,
+                "sources": sources,
+                "timestamp": datetime.now().isoformat()
+            })
+            
+            # Show sources
+            if sources:
+                with st.expander("📚 View Sources"):
+                    unique_sources = list(set(sources))
+                    for i, source in enumerate(unique_sources, 1):
+                        st.markdown(f"{i}. `{source}`")
+        
+        except Exception as e:
+            error_msg = f"❌ Error: {str(e)}"
+            message_placeholder.error(error_msg)
+            st.session_state.chat_history.append({
+                "role": "assistant",
+                "content": error_msg,
+                "sources": [],
+                "timestamp": datetime.now().isoformat()
+            })
+
+# ============================================================================
+# MAIN APPLICATION
+# ============================================================================
+
+def main():
+    """Main application entry point"""
+    
+    # Page config
+    st.set_page_config(
+        page_title="RAG Assistant - Document Chat",
+        page_icon="📚",
+        layout="wide",
+        initial_sidebar_state="auto",
+        menu_items={
+            'About': "# RAG Assistant\nChat with your documents using AI"
+        }
+    )
+    
+    # Apply custom styling
+    apply_custom_css()
+    
+    # Initialize API client
+    api_client = RAGAPIClient(API_BASE_URL)
+    
+    # Check backend health
+    health_status, health_data = api_client.health_check()
+    
+    if not health_status:
+        st.error("🔴 **Backend Offline**")
+        st.markdown("""
+        The RAG backend service is not running. Please start it with:
+        ```bash
+        python rag_backend.py
+        ```
+        """)
+        return
+    
+    # Render sidebar
+    render_sidebar(api_client)
+    
+    # Main content area
+    col1, col2, col3 = st.columns([6, 1, 1])
+    
+    with col2:
+        if st.button("📊", help="Dashboard"):
+            st.session_state.show_dashboard = not st.session_state.get('show_dashboard', False)
+    
+    with col3:
+        if st.button("⚙️", help="Settings"):
+            settings_dialog(api_client)
+    
+    # Show dashboard if toggled
+    if st.session_state.get('show_dashboard', False):
+        st.markdown("### 📊 System Dashboard")
+        UIComponents.render_metrics_dashboard(health_data)
+        st.markdown("---")
+    
+    # Render chat interface
+    render_chat_interface(api_client, health_data)
+
 if __name__ == "__main__":
     main()
