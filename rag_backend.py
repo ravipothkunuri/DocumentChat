@@ -189,11 +189,20 @@ def get_embeddings_model():
         
         return embeddings_model
     except Exception as e:
-        logger.error(f"Error initializing embeddings model: {e}")
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to initialize embeddings model '{config.embedding_model}'. Please ensure Ollama is running and the model is available."
-        )
+        error_msg = str(e)
+        logger.error(f"Error initializing embeddings model '{config.embedding_model}': {error_msg}")
+        
+        # Check if it's a model not found error
+        if "404" in error_msg or "not found" in error_msg.lower():
+            raise HTTPException(
+                status_code=404,
+                detail=f"Embedding model '{config.embedding_model}' not found. Please pull it first using: ollama pull {config.embedding_model}"
+            )
+        else:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to initialize embeddings model '{config.embedding_model}': {error_msg}"
+            )
 
 def get_llm_model(model_name: str = None):
     """Get or create LLM model (LangChain)."""
@@ -210,11 +219,20 @@ def get_llm_model(model_name: str = None):
         
         return llm_model
     except Exception as e:
-        logger.error(f"Error initializing LLM model: {e}")
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to initialize LLM model '{model_to_use}'. Please ensure Ollama is running and the model is available."
-        )
+        error_msg = str(e)
+        logger.error(f"Error initializing LLM model '{model_to_use}': {error_msg}")
+        
+        # Check if it's a model not found error
+        if "404" in error_msg or "not found" in error_msg.lower():
+            raise HTTPException(
+                status_code=404,
+                detail=f"Model '{model_to_use}' not found. Please pull it first using: ollama pull {model_to_use}"
+            )
+        else:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to initialize LLM model '{model_to_use}': {error_msg}"
+            )
 
 def validate_file_type(filename: str) -> bool:
     """Validate file type based on extension."""
