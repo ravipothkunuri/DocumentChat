@@ -213,16 +213,20 @@ def main():
         st.markdown('<h1 class="main-header">📚 RAG Assistant</h1>', unsafe_allow_html=True)
         st.markdown("---")
         
-        # Initialize session state for page
+        # Initialize session state for page - default to Chat if documents are available
         if 'current_page' not in st.session_state:
-            st.session_state.current_page = "📋 Dashboard"
+            has_documents = health_data and health_data.get('document_count', 0) > 0
+            st.session_state.current_page = "💬 Chat" if has_documents else "📋 Dashboard"
         
         # Menu options
-        if st.button("📋 Dashboard", use_container_width=True):
-            st.session_state.current_page = "📋 Dashboard"
+        if st.button("💬 Chat", use_container_width=True):
+            st.session_state.current_page = "💬 Chat"
         
         if st.button("📤 Upload Documents", use_container_width=True):
             st.session_state.current_page = "📤 Upload Documents"
+        
+        if st.button("📋 Dashboard", use_container_width=True):
+            st.session_state.current_page = "📋 Dashboard"
         
         if st.button("⚙️ Configuration", use_container_width=True):
             st.session_state.current_page = "⚙️ Configuration"
@@ -234,6 +238,8 @@ def main():
         upload_page()
     elif st.session_state.current_page == "⚙️ Configuration":
         config_page()
+    elif st.session_state.current_page == "💬 Chat":
+        chat_page(health_data)
 
 def dashboard_page(health_data):
     st.header("Dashboard")
@@ -489,6 +495,111 @@ def config_page():
     
     for key, value in current_config.items():
         st.write(f"**{key}:** {value}")
+
+def chat_page(health_data):
+    st.header("💬 Chat with Your Documents")
+    
+    # Check if documents are available
+    if health_data and health_data.get('document_count', 0) == 0:
+        st.warning("📁 No documents uploaded yet. Please upload documents first to start chatting!")
+        if st.button("Go to Upload Documents"):
+            st.session_state.current_page = "📤 Upload Documents"
+            st.rerun()
+        return
+    
+    # Initialize chat history in session state
+    if 'chat_history' not in st.session_state:
+        st.session_state.chat_history = []
+    
+    # Display chat messages
+    chat_container = st.container()
+    with chat_container:
+        for message in st.session_state.chat_history:
+            with st.chat_message(message["role"]):
+                st.markdown(message["content"])
+                if message["role"] == "assistant" and "sources" in message:
+                    with st.expander("📚 Sources"):
+                        st.write(", ".join(set(message["sources"])))
+    
+    # Chat input
+    if prompt := st.chat_input("Ask your documents anything..."):
+        # Add user message to chat history
+        st.session_state.chat_history.append({"role": "user", "content": prompt})
+        
+        # Display user message
+        with st.chat_message("user"):
+            st.markdown(prompt)
+        
+        # Get response from backend with streaming
+        with st.chat_message("assistant"):
+            message_placeholder = st.empty()
+            full_response = ""
+            sources = []
+            
+            try:
+                # Make streaming request to backend
+                import requests
+                response = requests.post(
+                    f"{API_BASE_URL}/query",
+                    json={
+                        "question": prompt,
+                        "stream": True,
+                        "top_k": 4
+                    },
+                    stream=True,
+                    timeout=60
+                )
+                
+                if response.status_code == 200:
+                    for line in response.iter_lines():
+                        if line:
+                            line_text = line.decode('utf-8')
+                            if line_text.startswith('data: '):
+                                data = json.loads(line_text[6:])
+                                
+                                if data.get('type') == 'metadata':
+                                    sources = data.get('sources', [])
+                                elif data.get('type') == 'content':
+                                    full_response += data.get('content', '')
+                                    message_placeholder.markdown(full_response + "▌")
+                                elif data.get('type') == 'done':
+                                    message_placeholder.markdown(full_response)
+                    
+                    # Add assistant response to chat history
+                    st.session_state.chat_history.append({
+                        "role": "assistant",
+                        "content": full_response,
+                        "sources": sources
+                    })
+                    
+                    # Show sources
+                    if sources:
+                        with st.expander("📚 Sources"):
+                            st.write(", ".join(set(sources)))
+                else:
+                    error_msg = "Sorry, I couldn't process your question. Please try again."
+                    message_placeholder.error(error_msg)
+                    st.session_state.chat_history.append({
+                        "role": "assistant",
+                        "content": error_msg,
+                        "sources": []
+                    })
+            
+            except Exception as e:
+                error_msg = f"Error: {str(e)}"
+                message_placeholder.error(error_msg)
+                st.session_state.chat_history.append({
+                    "role": "assistant",
+                    "content": error_msg,
+                    "sources": []
+                })
+    
+    # Clear chat button in sidebar
+    with st.sidebar:
+        st.markdown("---")
+        if st.button("🗑️ Clear Chat History", use_container_width=True):
+            st.session_state.chat_history = []
+            st.rerun()
 
 # Run the app
 if __name__ == "__main__":

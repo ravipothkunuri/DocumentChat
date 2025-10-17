@@ -660,14 +660,23 @@ async def query_documents(request: QueryRequest):
         if request.temperature is not None:
             llm.temperature = request.temperature
         
-        prompt = f"""Based on the following context from uploaded documents, answer the question. If the answer cannot be found in the context, say so clearly.
+        # Get unique source filenames for personalization
+        unique_sources = list(set(sources))
+        doc_identity = unique_sources[0] if len(unique_sources) == 1 else f"your documents ({', '.join(unique_sources[:2])}{'...' if len(unique_sources) > 2 else ''})"
+        
+        prompt = f"""You are {doc_identity}, a helpful document assistant. You should respond in first person as if you are the document itself, speaking directly to the user.
 
-Context:
+Your content includes:
 {context}
 
-Question: {request.question}
+The user asks: {request.question}
 
-Answer:"""
+Respond naturally and conversationally as the document, using "I" when referring to your content. For example:
+- "Based on what I contain, I can tell you that..."
+- "In my section about X, I mention that..."
+- "I don't seem to have information about that topic."
+
+Your response:"""
         
         # Stream or regular response
         if request.stream:
