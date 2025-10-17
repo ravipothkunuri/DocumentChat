@@ -671,7 +671,7 @@ Answer:"""
         
         # Stream or regular response
         if request.stream:
-            # Streaming response
+            # Streaming response with proper tag handling
             async def generate():
                 # Send metadata first
                 metadata = {
@@ -682,41 +682,21 @@ Answer:"""
                 }
                 yield f"data: {json.dumps(metadata)}\n\n"
                 
-                # Stream the answer - accumulate for cleaning
+                # Accumulate full response and clean at the end
                 full_answer = ""
-                buffer = ""
-                in_tag = False
                 
                 for chunk in llm.stream(prompt):
                     content = chunk.content if hasattr(chunk, 'content') else str(chunk)
                     full_answer += content
-                    buffer += content
-                    
-                    # Check if we're inside a reasoning tag
-                    if '<think>' in buffer.lower() or '<reasoning>' in buffer.lower() or '<thought>' in buffer.lower():
-                        in_tag = True
-                    
-                    # If we find closing tag, clean and send buffered content
-                    if in_tag and ('</think>' in buffer.lower() or '</reasoning>' in buffer.lower() or '</thought>' in buffer.lower()):
-                        cleaned = clean_llm_response(buffer)
-                        if cleaned:
-                            yield f"data: {json.dumps({'type': 'content', 'content': cleaned})}\n\n"
-                        buffer = ""
-                        in_tag = False
-                    # If not in tag and buffer is substantial, send it
-                    elif not in_tag and len(buffer) > 50:
-                        yield f"data: {json.dumps({'type': 'content', 'content': buffer})}\n\n"
-                        buffer = ""
-                    # If not in tag and we have some content, send smaller chunks
-                    elif not in_tag and len(buffer) > 0 and '\n' in buffer:
-                        yield f"data: {json.dumps({'type': 'content', 'content': buffer})}\n\n"
-                        buffer = ""
                 
-                # Send any remaining buffer (cleaned)
-                if buffer:
-                    cleaned = clean_llm_response(buffer) if in_tag else buffer
-                    if cleaned:
-                        yield f"data: {json.dumps({'type': 'content', 'content': cleaned})}\n\n"
+                # Clean the complete response to remove all reasoning tags
+                cleaned_answer = clean_llm_response(full_answer)
+                
+                # Stream the cleaned answer in chunks
+                chunk_size = 50
+                for i in range(0, len(cleaned_answer), chunk_size):
+                    chunk_text = cleaned_answer[i:i + chunk_size]
+                    yield f"data: {json.dumps({'type': 'content', 'content': chunk_text})}\n\n"
                 
                 # Send completion
                 processing_time = (datetime.now() - start_time).total_seconds()
