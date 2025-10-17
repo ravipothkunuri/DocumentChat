@@ -9,9 +9,9 @@ import numpy as np
 from sklearn.metrics.pairwise import cosine_similarity
 
 import uvicorn
-from fastapi import FastAPI, File, UploadFile, HTTPException, Query
+from fastapi import FastAPI, File, UploadFile, HTTPException, Query, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
 from langchain.text_splitter import RecursiveCharacterTextSplitter
@@ -38,6 +38,10 @@ class QueryRequest(BaseModel):
     model: Optional[str] = Field(None, description="LLM model to use")
     top_k: int = Field(4, ge=1, le=20, description="Number of chunks to retrieve")
     temperature: Optional[float] = Field(None, ge=0.0, le=2.0, description="LLM temperature")
+    source_filter: Optional[str] = Field(None, description="Filter by document source")
+    similarity_threshold: Optional[float] = Field(None, ge=0.0, le=1.0, description="Minimum similarity score")
+    use_hybrid_search: bool = Field(False, description="Use hybrid semantic + keyword search")
+    stream: bool = Field(False, description="Stream response in real-time")
 
 class QueryResponse(BaseModel):
     answer: str
@@ -348,10 +352,71 @@ async def health_check():
             }
         )
 
-# Upload endpoint
+# Background processing function
+async def process_document_background(filename: str, file_path: Path, file_size: int):
+    """Process document in background."""
+    try:
+        logger.info(f"Background processing started for {filename}")
+        
+        # Update status to processing
+        if filename in document_metadata:
+            document_metadata[filename]["status"] = "processing"
+            save_metadata()
+        
+        # Load and process document
+        logger.debug(f"Loading document content from {file_path}")
+        document_content = load_document(file_path)
+        
+        # Split into chunks
+        logger.debug(f"Splitting document into chunks")
+        documents = split_text(document_content, filename)
+        
+        if not documents:
+            raise ValueError("No content extracted from document")
+        
+        # Generate embeddings
+        logger.debug(f"Generating embeddings for {len(documents)} chunks")
+        embeddings_model = get_embeddings_model()
+        
+        texts = [doc["page_content"] for doc in documents]
+        embeddings = embeddings_model.embed_documents(texts)
+        
+        if not embeddings or len(embeddings) != len(documents):
+            raise ValueError("Failed to generate embeddings")
+        
+        # Add to vector store
+        logger.debug(f"Adding documents to vector store")
+        vector_store.add_documents(documents, embeddings)
+        
+        # Update metadata
+        document_metadata[filename].update({
+            "chunks": len(documents),
+            "status": "processed"
+        })
+        
+        save_metadata()
+        vector_store.save()
+        
+        logger.info(f"Background processing completed for {filename}: {len(documents)} chunks")
+        
+    except Exception as e:
+        logger.error(f"Error in background processing for {filename}: {e}")
+        logger.debug(traceback.format_exc())
+        
+        # Update status to failed
+        if filename in document_metadata:
+            document_metadata[filename]["status"] = "failed"
+            document_metadata[filename]["error"] = str(e)
+            save_metadata()
+        
+        # Cleanup on error
+        if file_path.exists():
+            file_path.unlink()
+
+# Upload endpoint (sync)
 @app.post("/upload", response_model=DocumentUploadResponse, tags=["Documents"])
 async def upload_document(file: UploadFile = File(...)):
-    """Upload and process a document."""
+    """Upload and process a document synchronously."""
     logger.info(f"Upload request for file: {file.filename}")
     
     # Validate file type
@@ -451,10 +516,10 @@ async def upload_document(file: UploadFile = File(...)):
         )
 
 # Query endpoint
-@app.post("/query", response_model=QueryResponse, tags=["Query"])
+@app.post("/query", tags=["Query"])
 async def query_documents(request: QueryRequest):
     """Query the document collection."""
-    logger.info(f"Query request: '{request.question[:50]}...' with model {request.model}")
+    logger.info(f"Query request: '{request.question[:50]}...' with model {request.model}, stream={request.stream}")
     
     start_time = datetime.now()
     
@@ -472,9 +537,24 @@ async def query_documents(request: QueryRequest):
         embeddings_model = get_embeddings_model()
         query_embedding = embeddings_model.embed_query(request.question)
         
-        # Perform similarity search
-        logger.debug(f"Performing similarity search with top_k={request.top_k}")
-        similar_docs = vector_store.similarity_search(query_embedding, k=request.top_k)
+        # Perform search (hybrid or semantic)
+        if request.use_hybrid_search:
+            logger.debug(f"Performing hybrid search with top_k={request.top_k}")
+            similar_docs = vector_store.hybrid_search(
+                query_text=request.question,
+                query_embedding=query_embedding,
+                k=request.top_k,
+                source_filter=request.source_filter,
+                similarity_threshold=request.similarity_threshold
+            )
+        else:
+            logger.debug(f"Performing similarity search with top_k={request.top_k}")
+            similar_docs = vector_store.similarity_search(
+                query_embedding, 
+                k=request.top_k,
+                source_filter=request.source_filter,
+                similarity_threshold=request.similarity_threshold
+            )
         
         if not similar_docs:
             raise HTTPException(
@@ -510,24 +590,59 @@ Question: {request.question}
 
 Answer:"""
         
-        response = llm.invoke(prompt)
-        answer = response.content if hasattr(response, 'content') else str(response)
-        
-        # Calculate processing time
-        processing_time = (datetime.now() - start_time).total_seconds()
-        
-        # Update query count
-        config.total_queries += 1
-        
-        logger.info(f"Query completed in {processing_time:.2f}s, {len(similar_docs)} chunks used")
-        
-        return QueryResponse(
-            answer=answer,
-            sources=sources,
-            chunks_used=len(similar_docs),
-            similarity_scores=similarity_scores,
-            processing_time=processing_time
-        )
+        # Stream or regular response
+        if request.stream:
+            # Streaming response
+            async def generate():
+                # Send metadata first
+                metadata = {
+                    "sources": sources,
+                    "chunks_used": len(similar_docs),
+                    "similarity_scores": similarity_scores,
+                    "type": "metadata"
+                }
+                yield f"data: {json.dumps(metadata)}\n\n"
+                
+                # Stream the answer
+                full_answer = ""
+                for chunk in llm.stream(prompt):
+                    content = chunk.content if hasattr(chunk, 'content') else str(chunk)
+                    full_answer += content
+                    yield f"data: {json.dumps({'type': 'content', 'content': content})}\n\n"
+                
+                # Send completion
+                processing_time = (datetime.now() - start_time).total_seconds()
+                completion = {
+                    "type": "done",
+                    "processing_time": processing_time
+                }
+                yield f"data: {json.dumps(completion)}\n\n"
+                
+                # Update query count
+                config.total_queries += 1
+                logger.info(f"Streaming query completed in {processing_time:.2f}s, {len(similar_docs)} chunks used")
+            
+            return StreamingResponse(generate(), media_type="text/event-stream")
+        else:
+            # Regular response
+            response = llm.invoke(prompt)
+            answer = response.content if hasattr(response, 'content') else str(response)
+            
+            # Calculate processing time
+            processing_time = (datetime.now() - start_time).total_seconds()
+            
+            # Update query count
+            config.total_queries += 1
+            
+            logger.info(f"Query completed in {processing_time:.2f}s, {len(similar_docs)} chunks used")
+            
+            return QueryResponse(
+                answer=answer,
+                sources=sources,
+                chunks_used=len(similar_docs),
+                similarity_scores=similarity_scores,
+                processing_time=processing_time
+            )
         
     except HTTPException:
         raise
