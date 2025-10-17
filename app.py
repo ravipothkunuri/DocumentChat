@@ -31,11 +31,12 @@ class Document:
     @property
     def size_formatted(self) -> str:
         """Format size in human-readable format"""
+        size = self.size
         for unit in ['B', 'KB', 'MB', 'GB']:
-            if self.size < 1024.0:
-                return f"{self.size:.1f} {unit}"
-            self.size /= 1024.0
-        return f"{self.size:.1f} TB"
+            if size < 1024.0:
+                return f"{size:.1f} {unit}"
+            size /= 1024.0
+        return f"{size:.1f} TB"
 
 @dataclass
 class ChatMessage:
@@ -44,6 +45,7 @@ class ChatMessage:
     content: str
     sources: List[str] = None
     timestamp: str = None
+    endpoint_type: str = None
     
     def __post_init__(self):
         if self.timestamp is None:
@@ -87,10 +89,12 @@ class RAGAPIClient:
         except requests.exceptions.RequestException:
             pass
         return {
-            "llm_models": [], 
-            "embedding_models": [], 
-            "current_llm": "llama3", 
-            "current_embedding": "nomic-embed-text"
+            "llm_models": ["phi3", "llama3", "mistral", "deepseek-r1"], 
+            "embedding_models": ["nomic-embed-text"],
+            "current_config": {
+                "model": "phi3",
+                "embedding_model": "nomic-embed-text"
+            }
         }
     
     def get_documents(self) -> List[Dict]:
@@ -102,6 +106,16 @@ class RAGAPIClient:
         except requests.exceptions.RequestException:
             pass
         return []
+    
+    def get_stats(self) -> Dict:
+        """Get system statistics"""
+        try:
+            response = self.session.get(f"{self.base_url}/stats", timeout=10)
+            if response.ok:
+                return response.json()
+        except requests.exceptions.RequestException:
+            pass
+        return {}
     
     def upload_file(self, file) -> Tuple[int, Dict]:
         """Upload a file to the backend"""
@@ -158,12 +172,23 @@ class RAGAPIClient:
         except requests.exceptions.RequestException as e:
             return 500, {"message": f"Connection error: {str(e)}"}
     
-    def query_stream(self, question: str, top_k: int = 4):
+    def query_stream(self, question: str, top_k: int = 4, model: str = None, temperature: float = None):
         """Stream query response"""
         try:
+            payload = {
+                "question": question, 
+                "stream": True, 
+                "top_k": top_k
+            }
+            
+            if model:
+                payload["model"] = model
+            if temperature is not None:
+                payload["temperature"] = temperature
+            
             response = self.session.post(
                 f"{self.base_url}/query",
-                json={"question": question, "stream": True, "top_k": top_k},
+                json=payload,
                 stream=True,
                 timeout=60
             )
@@ -175,7 +200,7 @@ class RAGAPIClient:
                         if line_text.startswith('data: '):
                             yield json.loads(line_text[6:])
             else:
-                yield {"type": "error", "message": "Query failed"}
+                yield {"type": "error", "message": f"Query failed with status {response.status_code}"}
         except Exception as e:
             yield {"type": "error", "message": str(e)}
 
@@ -215,6 +240,11 @@ def apply_custom_css():
     .status-error {
         background-color: #f8d7da;
         color: #721c24;
+    }
+    
+    .status-info {
+        background-color: #d1ecf1;
+        color: #0c5460;
     }
     
     /* Document cards */
@@ -323,10 +353,12 @@ class UIComponents:
                         st.error(f"❌ {response.get('message', 'Failed')}")
     
     @staticmethod
-    def render_metrics_dashboard(health_data: Dict):
+    def render_metrics_dashboard(health_data: Dict, stats_data: Dict):
         """Render system metrics dashboard"""
         if not health_data:
             return
+        
+        config = health_data.get('configuration', {})
         
         col1, col2, col3, col4 = st.columns(4)
         
@@ -346,26 +378,48 @@ class UIComponents:
         
         with col3:
             st.metric(
-                "🤖 LLM", 
-                health_data.get('current_model', 'N/A'),
-                help="Current language model"
+                "💬 Queries", 
+                stats_data.get('total_queries', 0),
+                help="Total queries processed"
             )
         
         with col4:
+            avg_chunks = stats_data.get('average_chunks_per_document', 0)
             st.metric(
-                "🔢 Embeddings", 
-                health_data.get('embedding_model', 'N/A'),
-                help="Current embedding model"
+                "📊 Avg Chunks/Doc", 
+                f"{avg_chunks:.1f}",
+                help="Average chunks per document"
             )
+        
+        st.markdown("---")
+        
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            st.info(f"**🤖 LLM Model**\n\n`{config.get('model', 'N/A')}`")
+        
+        with col2:
+            st.info(f"**🔢 Embedding Model**\n\n`{config.get('embedding_model', 'N/A')}`")
+        
+        with col3:
+            st.info(f"**🌡️ Temperature**\n\n`{config.get('temperature', 0.7)}`")
 
 # ============================================================================
 # DIALOGS
 # ============================================================================
 
-@st.dialog("⚙️ System Settings")
+@st.dialog("⚙️ System Settings", width="large")
 def settings_dialog(api_client: RAGAPIClient):
     """Settings modal dialog"""
     models_data = api_client.get_models()
+    health_status, health_data = api_client.health_check()
+    
+    # Get current configuration from health endpoint
+    current_config = {}
+    if health_data:
+        current_config = health_data.get('configuration', {})
+    else:
+        current_config = models_data.get('current_config', {})
     
     st.subheader("🤖 Model Configuration")
     
@@ -373,21 +427,40 @@ def settings_dialog(api_client: RAGAPIClient):
         col1, col2 = st.columns(2)
         
         with col1:
+            llm_models = models_data.get('llm_models', ['phi3', 'llama3', 'mistral', 'deepseek-r1'])
+            current_llm = current_config.get('model', 'phi3')
+            
+            # Find index of current model
+            try:
+                llm_index = llm_models.index(current_llm)
+            except ValueError:
+                llm_index = 0
+            
             llm_model = st.selectbox(
                 "LLM Model",
-                options=models_data.get('llm_models', ['llama3']),
-                index=0,
-                help="Model for generating answers"
+                options=llm_models,
+                index=llm_index,
+                help="Model for generating answers. DeepSeek-R1 uses intelligent endpoint detection."
             )
         
         with col2:
+            embedding_models = models_data.get('embedding_models', ['nomic-embed-text'])
+            current_embedding = current_config.get('embedding_model', 'nomic-embed-text')
+            
+            # Find index of current embedding model
+            try:
+                embed_index = embedding_models.index(current_embedding)
+            except ValueError:
+                embed_index = 0
+            
             embedding_model = st.selectbox(
                 "Embedding Model",
-                options=models_data.get('embedding_models', ['nomic-embed-text']),
-                index=0,
+                options=embedding_models,
+                index=embed_index,
                 help="Model for document embeddings"
             )
         
+        st.markdown("---")
         st.subheader("📝 Text Processing")
         
         col1, col2 = st.columns(2)
@@ -397,7 +470,7 @@ def settings_dialog(api_client: RAGAPIClient):
                 "Chunk Size", 
                 min_value=100, 
                 max_value=2000, 
-                value=1000, 
+                value=current_config.get('chunk_size', 1000), 
                 step=50,
                 help="Size of text chunks for processing"
             )
@@ -406,9 +479,9 @@ def settings_dialog(api_client: RAGAPIClient):
                 "Temperature", 
                 0.0, 
                 2.0, 
-                0.7, 
+                float(current_config.get('temperature', 0.7)), 
                 step=0.1,
-                help="Controls response randomness"
+                help="Controls response randomness (0=focused, 2=creative)"
             )
         
         with col2:
@@ -416,20 +489,14 @@ def settings_dialog(api_client: RAGAPIClient):
                 "Chunk Overlap", 
                 min_value=0, 
                 max_value=500, 
-                value=200, 
+                value=current_config.get('chunk_overlap', 200), 
                 step=25,
                 help="Overlap between consecutive chunks"
             )
-            
-            top_k = st.number_input(
-                "Top K Results",
-                min_value=1,
-                max_value=10,
-                value=4,
-                help="Number of relevant chunks to retrieve"
-            )
         
-        col1, col2 = st.columns([1, 1])
+        st.markdown("---")
+        
+        col1, col2, col3 = st.columns([1, 1, 1])
         with col1:
             submitted = st.form_submit_button(
                 "💾 Update Configuration", 
@@ -437,12 +504,20 @@ def settings_dialog(api_client: RAGAPIClient):
                 use_container_width=True
             )
         with col2:
-            reset = st.form_submit_button(
-                "🔄 Reset to Defaults",
+            apply_and_rebuild = st.form_submit_button(
+                "💾 Update & Rebuild",
+                use_container_width=True
+            )
+        with col3:
+            cancel = st.form_submit_button(
+                "❌ Cancel",
                 use_container_width=True
             )
     
-    if submitted:
+    if cancel:
+        st.rerun()
+    
+    if submitted or apply_and_rebuild:
         config = {
             "model": llm_model,
             "embedding_model": embedding_model,
@@ -459,34 +534,38 @@ def settings_dialog(api_client: RAGAPIClient):
             
             changed_fields = response.get('changed_fields', [])
             if changed_fields:
-                st.info(f"📝 Changed: {', '.join(changed_fields)}")
+                st.info(f"📝 Changed fields: {', '.join(changed_fields)}")
             
-            if 'embedding_model' in changed_fields:
-                st.warning("⚠️ Embedding model changed! Rebuild vectors for existing documents.")
-                
-                if st.button("🔄 Rebuild Vectors Now", use_container_width=True):
-                    with st.spinner("Rebuilding vectors..."):
-                        rebuild_status, rebuild_response = api_client.rebuild_vectors()
+            # Show warning if embedding model changed
+            embedding_changed = 'embedding_model' in changed_fields
+            if embedding_changed:
+                st.warning("⚠️ Embedding model changed! You should rebuild vectors for existing documents.")
+            
+            # Auto-rebuild if requested or if embedding changed and user chose that option
+            if apply_and_rebuild or (embedding_changed and apply_and_rebuild):
+                with st.spinner("Rebuilding vectors... This may take a while."):
+                    rebuild_status, rebuild_response = api_client.rebuild_vectors()
+                    
+                    if rebuild_status == 200:
+                        st.success("✅ Vectors rebuilt successfully!")
+                        results = rebuild_response.get('results', {})
                         
-                        if rebuild_status == 200:
-                            st.success("✅ Vectors rebuilt successfully!")
-                            results = rebuild_response.get('results', {})
+                        success_count = sum(1 for r in results.values() if r.get('success'))
+                        st.info(f"📊 Rebuilt {success_count}/{len(results)} documents")
+                        
+                        with st.expander("View Details"):
                             for filename, result in results.items():
-                                if result['success']:
-                                    st.write(f"✅ {filename}: {result['chunks']} chunks")
+                                if result.get('success'):
+                                    st.write(f"✅ {filename}: {result.get('chunks')} chunks")
                                 else:
-                                    st.write(f"❌ {filename}: {result['error']}")
-                        else:
-                            st.error(f"❌ {rebuild_response.get('message', 'Unknown error')}")
+                                    st.write(f"❌ {filename}: {result.get('error')}")
+                    else:
+                        st.error(f"❌ Rebuild failed: {rebuild_response.get('message', 'Unknown error')}")
             
-            time.sleep(1)
+            time.sleep(1.5)
             st.rerun()
         else:
-            st.error(f"❌ {response.get('message', 'Configuration update failed')}")
-    
-    if reset:
-        st.info("Reset functionality would restore default values")
-        st.rerun()
+            st.error(f"❌ Configuration update failed: {response.get('message', 'Unknown error')}")
 
 # ============================================================================
 # SIDEBAR
@@ -581,7 +660,7 @@ def upload_files(files: List, api_client: RAGAPIClient):
         status_code, response = api_client.upload_file(file)
         
         if status_code == 200:
-            st.success(f"✅ {file.name}")
+            st.success(f"✅ {file.name}: {response.get('chunks', 0)} chunks created")
             success_count += 1
         else:
             st.error(f"❌ {file.name}: {response.get('message', 'Failed')}")
@@ -622,6 +701,13 @@ def render_chat_interface(api_client: RAGAPIClient, health_data: Dict):
             
             4. **Configure Settings** ⚙️  
                Click the settings button to customize models and parameters
+            
+            ### Supported Models
+            
+            - **DeepSeek-R1**: Advanced reasoning model with automatic endpoint detection
+            - **Llama 3**: Fast and efficient general-purpose model
+            - **Phi-3**: Compact model optimized for quick responses
+            - **Mistral**: Balanced performance and quality
             """)
         return
     
@@ -636,11 +722,18 @@ def render_chat_interface(api_client: RAGAPIClient, health_data: Dict):
             with st.chat_message(message["role"]):
                 st.markdown(message["content"])
                 
-                if message["role"] == "assistant" and message.get("sources"):
-                    with st.expander("📚 View Sources"):
-                        unique_sources = list(set(message["sources"]))
-                        for i, source in enumerate(unique_sources, 1):
-                            st.markdown(f"{i}. `{source}`")
+                if message["role"] == "assistant":
+                    # Show endpoint info if available
+                    if message.get("endpoint_type"):
+                        endpoint_badge = f'<span class="status-badge status-info">Endpoint: {message["endpoint_type"]}</span>'
+                        st.markdown(endpoint_badge, unsafe_allow_html=True)
+                    
+                    # Show sources
+                    if message.get("sources"):
+                        with st.expander("📚 View Sources"):
+                            unique_sources = list(set(message["sources"]))
+                            for i, source in enumerate(unique_sources, 1):
+                                st.markdown(f"{i}. `{source}`")
     
     # Chat input
     if prompt := st.chat_input("💭 Ask your documents anything...", key="chat_input"):
@@ -664,11 +757,15 @@ def handle_chat_input(prompt: str, api_client: RAGAPIClient):
         message_placeholder = st.empty()
         full_response = ""
         sources = []
+        endpoint_type = None
+        model_used = None
         
         try:
             for data in api_client.query_stream(prompt):
                 if data.get('type') == 'metadata':
                     sources = data.get('sources', [])
+                    endpoint_type = data.get('endpoint_type')
+                    model_used = data.get('model_used')
                 elif data.get('type') == 'content':
                     full_response += data.get('content', '')
                     message_placeholder.markdown(full_response + "▌")
@@ -684,8 +781,15 @@ def handle_chat_input(prompt: str, api_client: RAGAPIClient):
                 "role": "assistant",
                 "content": full_response,
                 "sources": sources,
+                "endpoint_type": endpoint_type,
+                "model_used": model_used,
                 "timestamp": datetime.now().isoformat()
             })
+            
+            # Show endpoint info
+            if endpoint_type:
+                endpoint_badge = f'<span class="status-badge status-info">Endpoint: {endpoint_type}</span>'
+                st.markdown(endpoint_badge, unsafe_allow_html=True)
             
             # Show sources
             if sources:
@@ -718,7 +822,7 @@ def main():
         layout="wide",
         initial_sidebar_state="auto",
         menu_items={
-            'About': "# RAG Assistant\nChat with your documents using AI"
+            'About': "# RAG Assistant\nChat with your documents using AI with intelligent endpoint detection"
         }
     )
     
@@ -735,7 +839,7 @@ def main():
         st.error("🔴 **Backend Offline**")
         st.markdown("""
         The RAG backend service is not running. Please start it with:
-        ```bash
+        ```
         python rag_backend.py
         ```
         """)
@@ -747,22 +851,37 @@ def main():
     # Main content area
     col1, col2, col3 = st.columns([6, 1, 1])
     
+    with col1:
+        st.markdown('<h2 style="margin-bottom: 0;">💬 Chat with Your Documents</h2>', unsafe_allow_html=True)
+    
     with col2:
-        if st.button("📊", help="Dashboard"):
+        if st.button("📊", help="Dashboard", use_container_width=True):
             st.session_state.show_dashboard = not st.session_state.get('show_dashboard', False)
     
     with col3:
-        if st.button("⚙️", help="Settings"):
+        if st.button("⚙️", help="Settings", use_container_width=True):
             settings_dialog(api_client)
     
     # Show dashboard if toggled
     if st.session_state.get('show_dashboard', False):
+        st.markdown("---")
         st.markdown("### 📊 System Dashboard")
-        UIComponents.render_metrics_dashboard(health_data)
+        stats_data = api_client.get_stats()
+        UIComponents.render_metrics_dashboard(health_data, stats_data)
         st.markdown("---")
     
     # Render chat interface
     render_chat_interface(api_client, health_data)
+    
+    # Show connection status in footer
+    if health_data:
+        ollama_status = health_data.get('ollama_status', {})
+        if ollama_status.get('available'):
+            status_msg = f'<span class="status-badge status-success">✓ Connected to Ollama</span>'
+        else:
+            status_msg = f'<span class="status-badge status-error">✗ Ollama Unavailable</span>'
+        
+        st.markdown(f'<div style="text-align: center; margin-top: 2rem;">{status_msg}</div>', unsafe_allow_html=True)
 
 if __name__ == "__main__":
     main()
