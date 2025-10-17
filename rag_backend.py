@@ -22,7 +22,7 @@ from langchain_community.document_loaders import (
 )
 from langchain_ollama import OllamaEmbeddings
 
-from vector_store import VectorStore, VectorStoreError
+from vector_store import VectorStore
 
 # Configure logging
 logging.basicConfig(
@@ -119,54 +119,91 @@ class UniversalOllamaLLM:
     
     def _detect_endpoint(self) -> None:
         """Automatically detect which endpoint the model supports."""
+        # First check if model exists
         try:
-            # Try chat endpoint first (preferred for conversational models)
+            tags_response = requests.get(f"{self.base_url}/api/tags", timeout=5)
+            if tags_response.status_code == 200:
+                available_models = tags_response.json().get('models', [])
+                model_names = [m['name'] for m in available_models]
+                
+                # Check if exact model or base model exists
+                model_exists = any(
+                    self.model in name or name.startswith(self.model.split(':')[0])
+                    for name in model_names
+                )
+                
+                if not model_exists:
+                    logger.error(f"Model {self.model} not found in available models: {model_names}")
+                    raise HTTPException(
+                        status_code=404,
+                        detail=f"Model '{self.model}' not found. Available models: {', '.join([m.split(':')[0] for m in model_names[:5]])}. Pull it using: ollama pull {self.model}"
+                    )
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.warning(f"Could not verify model existence: {e}")
+        
+        # Try chat endpoint first (preferred for conversational models)
+        try:
             chat_url = f"{self.base_url}/api/chat"
             test_payload = {
                 "model": self.model,
-                "messages": [{"role": "user", "content": "test"}],
+                "messages": [{"role": "user", "content": "hi"}],
                 "stream": False
             }
             
             response = requests.post(
                 chat_url, 
                 json=test_payload, 
-                timeout=10
+                timeout=15
             )
             
             if response.status_code == 200:
                 self.endpoint_type = "chat"
                 logger.info(f"Model {self.model} supports /api/chat endpoint")
                 return
+            elif response.status_code == 404:
+                logger.debug(f"Model {self.model} returned 404 on chat endpoint, trying generate")
+        except requests.exceptions.Timeout:
+            logger.warning(f"Chat endpoint test timed out for {self.model}")
         except Exception as e:
             logger.debug(f"Chat endpoint test failed: {e}")
         
+        # Try generate endpoint
         try:
-            # Try generate endpoint
             generate_url = f"{self.base_url}/api/generate"
             test_payload = {
                 "model": self.model,
-                "prompt": "test",
+                "prompt": "hi",
                 "stream": False
             }
             
             response = requests.post(
                 generate_url, 
                 json=test_payload, 
-                timeout=10
+                timeout=15
             )
             
             if response.status_code == 200:
                 self.endpoint_type = "generate"
                 logger.info(f"Model {self.model} supports /api/generate endpoint")
                 return
+            elif response.status_code == 404:
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"Model '{self.model}' not found or not responding. Pull it using: ollama pull {self.model}"
+                )
+        except HTTPException:
+            raise
+        except requests.exceptions.Timeout:
+            logger.warning(f"Generate endpoint test timed out for {self.model}")
         except Exception as e:
             logger.debug(f"Generate endpoint test failed: {e}")
         
-        # Default to generate if detection fails
-        self.endpoint_type = "generate"
-        logger.warning(
-            f"Could not detect endpoint for {self.model}, defaulting to /api/generate"
+        # If both failed, raise error
+        raise HTTPException(
+            status_code=503,
+            detail=f"Could not connect to model '{self.model}'. Ensure Ollama is running and the model is pulled."
         )
     
     def _call_chat_endpoint(
@@ -245,11 +282,24 @@ class UniversalOllamaLLM:
             else:
                 return data.get("response", "")
         
+        except requests.exceptions.HTTPError as e:
+            if e.response.status_code == 404:
+                logger.error(f"Model {self.model} not found (404)")
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"Model '{self.model}' not found. Pull it using: ollama pull {self.model}"
+                )
+            else:
+                logger.error(f"HTTP error for model {self.model}: {e}")
+                raise HTTPException(
+                    status_code=e.response.status_code,
+                    detail=f"Model {self.model} returned error: {str(e)}"
+                )
         except requests.exceptions.Timeout:
             logger.error(f"Request timeout for model {self.model}")
             raise HTTPException(
                 status_code=504,
-                detail=f"Model {self.model} request timed out"
+                detail=f"Model {self.model} request timed out after {self.timeout}s"
             )
         except requests.exceptions.RequestException as e:
             logger.error(f"Request failed for model {self.model}: {e}")
@@ -304,11 +354,24 @@ class UniversalOllamaLLM:
                         logger.warning(f"Failed to decode JSON: {line}")
                         continue
         
+        except requests.exceptions.HTTPError as e:
+            if e.response.status_code == 404:
+                logger.error(f"Model {self.model} not found during streaming (404)")
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"Model '{self.model}' not found. Pull it using: ollama pull {self.model}"
+                )
+            else:
+                logger.error(f"HTTP error streaming from model {self.model}: {e}")
+                raise HTTPException(
+                    status_code=e.response.status_code,
+                    detail=f"Model {self.model} streaming error: {str(e)}"
+                )
         except requests.exceptions.Timeout:
             logger.error(f"Streaming timeout for model {self.model}")
             raise HTTPException(
                 status_code=504,
-                detail=f"Model {self.model} streaming timed out"
+                detail=f"Model {self.model} streaming timed out after {self.timeout}s"
             )
         except requests.exceptions.RequestException as e:
             logger.error(f"Streaming failed for model {self.model}: {e}")
