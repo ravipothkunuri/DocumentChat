@@ -12,7 +12,7 @@ from contextlib import asynccontextmanager
 from enum import Enum
 
 import uvicorn
-from fastapi import FastAPI, File, UploadFile, HTTPException, Query, BackgroundTasks
+from fastapi import FastAPI, File, UploadFile, Request, HTTPException, Query, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field, validator
@@ -1205,16 +1205,149 @@ async def upload_document(file: UploadFile = File(...)):
         raise HTTPException(status_code=500, detail=f"Failed to process document: {str(e)}")
 
 
+# @app.post("/query", tags=["Query"])
+# async def query_documents(request: QueryRequest):
+#     """Query the document collection."""
+#     model_info = request.model or config_manager.get('model')
+#     provider_info = request.provider or config_manager.get('provider')
+    
+#     logger.info(f"Query request: '{request.question[:50]}...' with {model_info} ({provider_info})")
+    
+#     start_time = datetime.now()
+    
+#     try:
+#         # Validate documents exist
+#         stats = vector_store.get_stats()
+#         if stats.get("total_chunks", 0) == 0:
+#             raise HTTPException(
+#                 status_code=400,
+#                 detail="No documents available. Please upload documents first."
+#             )
+        
+#         # Get embeddings model
+#         try:
+#             embeddings_model = model_manager.get_embeddings_model()
+#         except ValueError as e:
+#             logger.error(f"Embeddings model error: {e}")
+#             raise HTTPException(status_code=503, detail=str(e))
+        
+#         # Generate query embedding
+#         try:
+#             query_embedding = embeddings_model.embed_query(request.question)
+#         except Exception as e:
+#             logger.error(f"Embedding generation failed: {e}")
+#             raise HTTPException(status_code=500, detail=f"Failed to generate query embedding: {str(e)}")
+        
+#         # Search similar documents
+#         similar_docs = vector_store.similarity_search(query_embedding, k=request.top_k)
+        
+#         if not similar_docs:
+#             raise HTTPException(status_code=400, detail="No relevant documents found")
+        
+#         # Prepare context
+#         context_parts = []
+#         sources = []
+#         similarity_scores = []
+        
+#         for doc, score in similar_docs:
+#             context_parts.append(f"Source: {doc['metadata']['source']}\nContent: {doc['page_content']}")
+#             sources.append(doc['metadata']['source'])
+#             similarity_scores.append(float(score))
+        
+#         context = "\n\n".join(context_parts)
+        
+#         # Get LLM
+#         try:
+#             llm = model_manager.get_llm_model(request.model, request.provider)
+#             if request.temperature is not None:
+#                 llm.temperature = request.temperature
+#         except ValueError as e:
+#             logger.error(f"LLM model error: {e}")
+#             raise HTTPException(status_code=503, detail=str(e))
+        
+#         # Build prompt
+#         unique_sources = list(set(sources))
+#         doc_identity = unique_sources[0] if len(unique_sources) == 1 else f"your documents"
+        
+#         prompt = f"""You are {doc_identity}, a helpful document assistant. Respond in first person.
+
+# Your content includes:
+# {context}
+
+# The user asks: {request.question}
+
+# Respond naturally as the document. Your response:"""
+        
+#         # Stream or regular response
+#         if request.stream:
+#             async def generate() -> AsyncGenerator[str, None]:
+#                 try:
+#                     metadata = {
+#                         "sources": sources,
+#                         "chunks_used": len(similar_docs),
+#                         "similarity_scores": similarity_scores,
+#                         "model_used": llm.model,
+#                         "provider": provider_info,
+#                         "type": "metadata"
+#                     }
+#                     yield f"data: {json.dumps(metadata)}\n\n"
+                    
+#                     for chunk in llm.stream(prompt):
+#                         if len(chunk) > 0:
+#                             yield f"data: {json.dumps({'type': 'content', 'content': chunk})}\n\n"
+                    
+#                     processing_time = (datetime.now() - start_time).total_seconds()
+#                     completion = {"type": "done", "processing_time": processing_time}
+#                     yield f"data: {json.dumps(completion)}\n\n"
+                    
+#                     config_manager.increment_queries()
+#                     logger.info(f"Streaming query completed in {processing_time:.2f}s")
+                
+#                 except Exception as e:
+#                     logger.error(f"Streaming error: {e}")
+#                     error_msg = {"type": "error", "error": str(e)}
+#                     yield f"data: {json.dumps(error_msg)}\n\n"
+            
+#             return StreamingResponse(generate(), media_type="text/event-stream")
+        
+#         else:
+#             # Regular response
+#             try:
+#                 answer = llm.invoke(prompt)
+#                 answer = clean_llm_response(answer)
+#             except ValueError as e:
+#                 logger.error(f"LLM invocation failed: {e}")
+#                 raise HTTPException(status_code=503, detail=str(e))
+            
+#             processing_time = (datetime.now() - start_time).total_seconds()
+#             config_manager.increment_queries()
+            
+#             logger.info(f"Query completed in {processing_time:.2f}s, {len(similar_docs)} chunks used")
+            
+#             return QueryResponse(
+#                 answer=answer,
+#                 sources=sources,
+#                 chunks_used=len(similar_docs),
+#                 similarity_scores=similarity_scores,
+#                 processing_time=processing_time,
+#                 model_used=llm.model,
+#                 provider=provider_info
+#             )
+    
+#     except HTTPException:
+#         raise
+#     except Exception as e:
+#         logger.error(f"Error processing query: {e}")
+#         logger.debug(traceback.format_exc())
+#         raise HTTPException(status_code=500, detail=f"Failed to process query: {str(e)}")
+
+
+
 @app.post("/query", tags=["Query"])
-async def query_documents(request: QueryRequest):
-    """Query the document collection."""
-    model_info = request.model or config_manager.get('model')
-    provider_info = request.provider or config_manager.get('provider')
-    
-    logger.info(f"Query request: '{request.question[:50]}...' with {model_info} ({provider_info})")
-    
+async def query_documents(request: Request, query: QueryRequest):
+    """Query the document collection with client disconnect handling."""
+    logger.info(f"Query request: '{query.question[:50]}...' with model {query.model or config_manager.get('model')}")
     start_time = datetime.now()
-    
     try:
         # Validate documents exist
         stats = vector_store.get_stats()
@@ -1233,14 +1366,13 @@ async def query_documents(request: QueryRequest):
         
         # Generate query embedding
         try:
-            query_embedding = embeddings_model.embed_query(request.question)
+            query_embedding = embeddings_model.embed_query(query.question)
         except Exception as e:
             logger.error(f"Embedding generation failed: {e}")
             raise HTTPException(status_code=500, detail=f"Failed to generate query embedding: {str(e)}")
         
         # Search similar documents
-        similar_docs = vector_store.similarity_search(query_embedding, k=request.top_k)
-        
+        similar_docs = vector_store.similarity_search(query_embedding, k=query.top_k)
         if not similar_docs:
             raise HTTPException(status_code=400, detail="No relevant documents found")
         
@@ -1248,98 +1380,89 @@ async def query_documents(request: QueryRequest):
         context_parts = []
         sources = []
         similarity_scores = []
-        
         for doc, score in similar_docs:
             context_parts.append(f"Source: {doc['metadata']['source']}\nContent: {doc['page_content']}")
             sources.append(doc['metadata']['source'])
             similarity_scores.append(float(score))
-        
         context = "\n\n".join(context_parts)
         
         # Get LLM
         try:
-            llm = model_manager.get_llm_model(request.model, request.provider)
-            if request.temperature is not None:
-                llm.temperature = request.temperature
+            llm = model_manager.get_llm_model(query.model)
+            if query.temperature is not None:
+                llm.temperature = query.temperature
         except ValueError as e:
             logger.error(f"LLM model error: {e}")
             raise HTTPException(status_code=503, detail=str(e))
         
         # Build prompt
         unique_sources = list(set(sources))
-        doc_identity = unique_sources[0] if len(unique_sources) == 1 else f"your documents"
-        
+        doc_identity = unique_sources[0] if len(unique_sources) == 1 else "your documents"
         prompt = f"""You are {doc_identity}, a helpful document assistant. Respond in first person.
 
 Your content includes:
 {context}
 
-The user asks: {request.question}
+The user asks: {query.question}
 
 Respond naturally as the document. Your response:"""
         
-        # Stream or regular response
-        if request.stream:
-            async def generate() -> AsyncGenerator[str, None]:
+        # Streaming or regular response
+        if query.stream:
+            async def generate():
                 try:
                     metadata = {
                         "sources": sources,
                         "chunks_used": len(similar_docs),
                         "similarity_scores": similarity_scores,
                         "model_used": llm.model,
-                        "provider": provider_info,
                         "type": "metadata"
                     }
                     yield f"data: {json.dumps(metadata)}\n\n"
-                    
+
                     for chunk in llm.stream(prompt):
+                        # Abort if client disconnected
+                        if await request.is_disconnected():
+                            logger.info("Client disconnected -- stopping streaming response.")
+                            break
                         if len(chunk) > 0:
                             yield f"data: {json.dumps({'type': 'content', 'content': chunk})}\n\n"
-                    
+
                     processing_time = (datetime.now() - start_time).total_seconds()
                     completion = {"type": "done", "processing_time": processing_time}
                     yield f"data: {json.dumps(completion)}\n\n"
-                    
                     config_manager.increment_queries()
                     logger.info(f"Streaming query completed in {processing_time:.2f}s")
-                
                 except Exception as e:
                     logger.error(f"Streaming error: {e}")
                     error_msg = {"type": "error", "error": str(e)}
                     yield f"data: {json.dumps(error_msg)}\n\n"
-            
             return StreamingResponse(generate(), media_type="text/event-stream")
-        
         else:
-            # Regular response
             try:
                 answer = llm.invoke(prompt)
                 answer = clean_llm_response(answer)
             except ValueError as e:
                 logger.error(f"LLM invocation failed: {e}")
                 raise HTTPException(status_code=503, detail=str(e))
-            
             processing_time = (datetime.now() - start_time).total_seconds()
             config_manager.increment_queries()
-            
-            logger.info(f"Query completed in {processing_time:.2f}s, {len(similar_docs)} chunks used")
-            
-            return QueryResponse(
-                answer=answer,
-                sources=sources,
-                chunks_used=len(similar_docs),
-                similarity_scores=similarity_scores,
-                processing_time=processing_time,
-                model_used=llm.model,
-                provider=provider_info
-            )
-    
+            logger.info(f"Query completed in {processing_time:.2f}s with model '{llm.model}'")
+            return {
+                "answer": answer,
+                "sources": sources,
+                "chunks_used": len(similar_docs),
+                "similarity_scores": similarity_scores,
+                "processing_time": processing_time,
+                "model_used": llm.model
+            }
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"Error processing query: {e}")
         logger.debug(traceback.format_exc())
         raise HTTPException(status_code=500, detail=f"Failed to process query: {str(e)}")
+
 
 
 @app.get("/documents", response_model=List[DocumentInfo], tags=["Documents"])
