@@ -427,9 +427,9 @@ def settings_dialog(api_client: RAGAPIClient):
         col1, col2 = st.columns(2)
         
         with col1:
-            llm_models = models_data.get('llm_models', ['phi3', 'llama3', 'mistral', 'deepseek-r1'])
-            current_llm = current_config.get('model', 'phi3')
-            
+            ollama_models = models_data.get('ollama', [])
+            llm_models = ollama_models.get('llm_models', ['phi3', 'llama3', 'mistral', 'deepseek-r1'])
+            current_llm = current_config.get('model', 'phi3')                        
             # Find index of current model
             try:
                 llm_index = llm_models.index(current_llm)
