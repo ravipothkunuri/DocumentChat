@@ -670,7 +670,6 @@ def upload_files(files: List, api_client: RAGAPIClient):
     status_text.text(f"✨ Complete: {success_count}/{total_files} uploaded")
     
     if success_count > 0:
-        st.balloons()
         time.sleep(1.5)
         st.rerun()
 
@@ -685,6 +684,9 @@ def render_chat_interface(api_client: RAGAPIClient, health_data: Dict):
     if health_data and health_data.get('document_count', 0) == 0:
         st.info("👋 **Welcome!** Upload documents from the sidebar to start chatting.")
         
+        models_data = api_client.get_models()
+        llm_models = models_data.get('ollama', {}).get('llm_models', ['phi3', 'llama3', 'mistral', 'deepseek-r1'])
+    
         # Show quick start guide
         with st.expander("📖 Quick Start Guide", expanded=True):
             st.markdown("""
@@ -702,12 +704,18 @@ def render_chat_interface(api_client: RAGAPIClient, health_data: Dict):
             4. **Configure Settings** ⚙️  
                Click the settings button to customize models and parameters
             
-            ### Supported Models
-            
-            - **DeepSeek-R1**: Advanced reasoning model with automatic endpoint detection
-            - **Llama 3**: Fast and efficient general-purpose model
-            - **Phi-3**: Compact model optimized for quick responses
-            - **Mistral**: Balanced performance and quality
+            """)
+
+            if llm_models:
+                st.markdown(f"**Available LLM Models:** {', '.join(llm_models)}")   
+            else:
+                st.markdown("""
+                ### Supported Models
+
+                - **DeepSeek-R1**: Advanced reasoning model with automatic endpoint detection
+                - **Llama 3**: Fast and efficient general-purpose model
+                - **Phi-3**: Compact model optimized for quick responses
+                - **Mistral**: Balanced performance and quality
             """)
         return
     
@@ -715,6 +723,12 @@ def render_chat_interface(api_client: RAGAPIClient, health_data: Dict):
     if 'chat_history' not in st.session_state:
         st.session_state.chat_history = []
     
+    ollama_status = health_data.get('ollama_status', {}) if health_data else {}
+    if ollama_status.get('available'):
+        st.success("✓ Ollama Connected")
+    else:
+        st.error("✗ Ollama Unavailable")
+
     # Display chat messages
     chat_container = st.container()
     with chat_container:
@@ -727,13 +741,6 @@ def render_chat_interface(api_client: RAGAPIClient, health_data: Dict):
                     if message.get("endpoint_type"):
                         endpoint_badge = f'<span class="status-badge status-info">Endpoint: {message["endpoint_type"]}</span>'
                         st.markdown(endpoint_badge, unsafe_allow_html=True)
-                    
-                    # Show sources
-                    if message.get("sources"):
-                        with st.expander("📚 View Sources"):
-                            unique_sources = list(set(message["sources"]))
-                            for i, source in enumerate(unique_sources, 1):
-                                st.markdown(f"{i}. `{source}`")
     
     # Chat input
     if prompt := st.chat_input("💭 Ask your documents anything...", key="chat_input"):
@@ -790,13 +797,6 @@ def handle_chat_input(prompt: str, api_client: RAGAPIClient):
             if endpoint_type:
                 endpoint_badge = f'<span class="status-badge status-info">Endpoint: {endpoint_type}</span>'
                 st.markdown(endpoint_badge, unsafe_allow_html=True)
-            
-            # Show sources
-            if sources:
-                with st.expander("📚 View Sources"):
-                    unique_sources = list(set(sources))
-                    for i, source in enumerate(unique_sources, 1):
-                        st.markdown(f"{i}. `{source}`")
         
         except Exception as e:
             error_msg = f"❌ Error: {str(e)}"
@@ -872,16 +872,6 @@ def main():
     
     # Render chat interface
     render_chat_interface(api_client, health_data)
-    
-    # Show connection status in footer
-    if health_data:
-        ollama_status = health_data.get('ollama_status', {})
-        if ollama_status.get('available'):
-            status_msg = f'<span class="status-badge status-success">✓ Connected to Ollama</span>'
-        else:
-            status_msg = f'<span class="status-badge status-error">✗ Ollama Unavailable</span>'
-        
-        st.markdown(f'<div style="text-align: center; margin-top: 2rem;">{status_msg}</div>', unsafe_allow_html=True)
 
 if __name__ == "__main__":
     main()
