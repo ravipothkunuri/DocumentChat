@@ -8,22 +8,22 @@ from sklearn.metrics.pairwise import cosine_similarity
 
 logger = logging.getLogger(__name__)
 
+
 class VectorStore:
     """Custom in-memory vector store with JSON persistence."""
     
     def __init__(self, storage_path: str = "vector_data/vectors.json"):
         self.storage_path = Path(storage_path)
-        self.documents = []  # List of documents with metadata
-        self.embeddings = None  # Numpy array of embeddings
-        self.embedding_dimensions = None
-        self.last_update = None
+        self.documents: List[Dict[str, Any]] = []
+        self.embeddings: Optional[np.ndarray] = None
+        self.embedding_dimensions: Optional[int] = None
+        self.last_update: Optional[str] = None
         
         # Ensure directory exists
         self.storage_path.parent.mkdir(exist_ok=True)
-        
-        logger.debug(f"VectorStore initialized with storage path: {self.storage_path}")
+        logger.debug(f"VectorStore initialized with storage: {self.storage_path}")
     
-    def add_documents(self, documents: List[Dict[str, Any]], embeddings: List[List[float]]):
+    def add_documents(self, documents: List[Dict[str, Any]], embeddings: List[List[float]]) -> None:
         """Add documents and their embeddings to the store."""
         if not documents or not embeddings:
             raise ValueError("Documents and embeddings cannot be empty")
@@ -31,10 +31,10 @@ class VectorStore:
         if len(documents) != len(embeddings):
             raise ValueError(f"Mismatch: {len(documents)} documents, {len(embeddings)} embeddings")
         
-        # Convert embeddings to numpy array
+        # Convert to numpy array
         embedding_array = np.array(embeddings, dtype=np.float32)
         
-        # Validate dimensions
+        # Initialize or validate dimensions
         if self.embedding_dimensions is None:
             self.embedding_dimensions = embedding_array.shape[1]
             logger.info(f"Set embedding dimensions to {self.embedding_dimensions}")
@@ -48,17 +48,20 @@ class VectorStore:
         self.documents.extend(documents)
         
         # Add embeddings
-        if self.embeddings is None:
-            self.embeddings = embedding_array
-        else:
-            self.embeddings = np.vstack([self.embeddings, embedding_array])
+        self.embeddings = (
+            embedding_array if self.embeddings is None
+            else np.vstack([self.embeddings, embedding_array])
+        )
         
         self.last_update = datetime.now().isoformat()
         
-        logger.debug(f"Added {len(documents)} documents to vector store. "
-                    f"Total: {len(self.documents)} documents, {self.embeddings.shape[0]} embeddings")
+        logger.debug(f"Added {len(documents)} documents. Total: {len(self.documents)}")
     
-    def similarity_search(self, query_embedding: List[float], k: int = 4) -> List[Tuple[Dict[str, Any], float]]:
+    def similarity_search(
+        self, 
+        query_embedding: List[float], 
+        k: int = 4
+    ) -> List[Tuple[Dict[str, Any], float]]:
         """Find the most similar documents to the query."""
         if self.embeddings is None or len(self.documents) == 0:
             logger.warning("No documents in vector store for similarity search")
@@ -70,48 +73,32 @@ class VectorStore:
                 f"got {len(query_embedding)}"
             )
         
-        # Convert query to numpy array
+        # Convert query to numpy array and calculate similarity
         query_array = np.array([query_embedding], dtype=np.float32)
-        
-        # Calculate cosine similarity
         similarities = cosine_similarity(query_array, self.embeddings)[0]
         
         # Get top k indices
-        top_indices = np.argsort(similarities)[::-1][:k]
+        top_k = min(k, len(self.documents))
+        top_indices = np.argsort(similarities)[::-1][:top_k]
         
-        # Return documents with similarity scores
-        results = []
-        for idx in top_indices:
-            results.append((self.documents[idx], similarities[idx]))
+        # Build results
+        results = [(self.documents[idx], float(similarities[idx])) for idx in top_indices]
         
-        logger.debug(f"Similarity search returned {len(results)} results with scores: "
-                    f"{[score for _, score in results]}")
-        
+        logger.debug(f"Similarity search returned {len(results)} results")
         return results
     
-    def get_documents_by_source(self, source: str) -> List[Dict[str, Any]]:
-        """Get all documents from a specific source."""
-        matching_docs = []
-        for doc in self.documents:
-            if doc.get('metadata', {}).get('source') == source:
-                matching_docs.append(doc)
-        
-        logger.debug(f"Found {len(matching_docs)} documents from source: {source}")
-        return matching_docs
-    
-    def remove_documents_by_source(self, source: str):
+    def remove_documents_by_source(self, source: str) -> None:
         """Remove all documents from a specific source."""
-        indices_to_remove = []
-        
-        for i, doc in enumerate(self.documents):
-            if doc.get('metadata', {}).get('source') == source:
-                indices_to_remove.append(i)
+        indices_to_remove = [
+            i for i, doc in enumerate(self.documents)
+            if doc.get('metadata', {}).get('source') == source
+        ]
         
         if not indices_to_remove:
             logger.warning(f"No documents found for source: {source}")
             return
         
-        # Remove in reverse order to maintain indices
+        # Remove documents in reverse order
         for i in reversed(indices_to_remove):
             del self.documents[i]
         
@@ -119,23 +106,20 @@ class VectorStore:
         if self.embeddings is not None:
             mask = np.ones(self.embeddings.shape[0], dtype=bool)
             mask[indices_to_remove] = False
-            self.embeddings = self.embeddings[mask]
+            self.embeddings = self.embeddings[mask] if mask.any() else None
             
-            if self.embeddings.shape[0] == 0:
-                self.embeddings = None
+            if self.embeddings is None:
                 self.embedding_dimensions = None
         
         self.last_update = datetime.now().isoformat()
-        
         logger.info(f"Removed {len(indices_to_remove)} documents from source: {source}")
     
-    def clear(self):
+    def clear(self) -> None:
         """Clear all documents and embeddings."""
         self.documents = []
         self.embeddings = None
         self.embedding_dimensions = None
         self.last_update = datetime.now().isoformat()
-        
         logger.info("Vector store cleared")
     
     def get_stats(self) -> Dict[str, Any]:
@@ -144,28 +128,18 @@ class VectorStore:
             "total_documents": len(self.documents),
             "total_chunks": len(self.documents),
             "embedding_dimensions": self.embedding_dimensions,
-            "last_update": self.last_update
+            "last_update": self.last_update,
+            "dimension_consistent": True,
+            "vector_store_size": 0
         }
         
-        # Check dimension consistency
         if self.embeddings is not None:
             stats["dimension_consistent"] = self.embeddings.shape[1] == self.embedding_dimensions
             stats["vector_store_size"] = self.embeddings.nbytes
-        else:
-            stats["dimension_consistent"] = True
-            stats["vector_store_size"] = 0
         
         return stats
     
-    def get_sample_documents(self, n: int = 5) -> List[Dict[str, Any]]:
-        """Get a sample of documents for inspection."""
-        if not self.documents:
-            return []
-        
-        sample_size = min(n, len(self.documents))
-        return self.documents[:sample_size]
-    
-    def save(self):
+    def save(self) -> None:
         """Save the vector store to disk."""
         try:
             data = {
@@ -185,7 +159,7 @@ class VectorStore:
             logger.error(f"Error saving vector store: {e}")
             raise
     
-    def load(self):
+    def load(self) -> None:
         """Load the vector store from disk."""
         if not self.storage_path.exists():
             logger.info("No existing vector store file found")
@@ -206,30 +180,37 @@ class VectorStore:
                 
                 # Validate consistency
                 if len(self.documents) != self.embeddings.shape[0]:
-                    logger.error(f"Inconsistent data: {len(self.documents)} documents, "
-                               f"{self.embeddings.shape[0]} embeddings")
-                    raise ValueError("Corrupted vector store: document/embedding count mismatch")
+                    raise ValueError(
+                        f"Corrupted store: {len(self.documents)} documents, "
+                        f"{self.embeddings.shape[0]} embeddings"
+                    )
                 
                 if self.embeddings.shape[1] != self.embedding_dimensions:
-                    logger.error(f"Inconsistent dimensions: stored {self.embedding_dimensions}, "
-                               f"loaded {self.embeddings.shape[1]}")
-                    raise ValueError("Corrupted vector store: dimension mismatch")
+                    raise ValueError(
+                        f"Corrupted store: dimension mismatch "
+                        f"(expected {self.embedding_dimensions}, got {self.embeddings.shape[1]})"
+                    )
             else:
                 self.embeddings = None
             
-            logger.info(f"Vector store loaded: {len(self.documents)} documents, "
-                       f"dimensions: {self.embedding_dimensions}")
+            logger.info(
+                f"Vector store loaded: {len(self.documents)} documents, "
+                f"dimensions: {self.embedding_dimensions}"
+            )
             
         except json.JSONDecodeError as e:
             logger.error(f"Invalid JSON in vector store file: {e}")
-            raise ValueError("Corrupted vector store: invalid JSON")
+            self._handle_corrupted_store("invalid JSON")
         except Exception as e:
             logger.error(f"Error loading vector store: {e}")
-            # Auto-clear corrupted store
-            logger.warning("Clearing corrupted vector store")
-            self.clear()
-            self.save()
-            raise ValueError(f"Corrupted vector store cleared: {str(e)}")
+            self._handle_corrupted_store(str(e))
+    
+    def _handle_corrupted_store(self, reason: str) -> None:
+        """Handle corrupted vector store by clearing and saving."""
+        logger.warning(f"Clearing corrupted vector store: {reason}")
+        self.clear()
+        self.save()
+        raise ValueError(f"Corrupted vector store cleared: {reason}")
     
     def validate_consistency(self) -> bool:
         """Validate internal consistency of the vector store."""
@@ -237,17 +218,21 @@ class VectorStore:
             # Check document/embedding count
             if self.embeddings is not None:
                 if len(self.documents) != self.embeddings.shape[0]:
-                    logger.error(f"Count mismatch: {len(self.documents)} docs, "
-                               f"{self.embeddings.shape[0]} embeddings")
+                    logger.error(
+                        f"Count mismatch: {len(self.documents)} docs, "
+                        f"{self.embeddings.shape[0]} embeddings"
+                    )
                     return False
                 
                 # Check dimensions
                 if self.embeddings.shape[1] != self.embedding_dimensions:
-                    logger.error(f"Dimension mismatch: expected {self.embedding_dimensions}, "
-                               f"got {self.embeddings.shape[1]}")
+                    logger.error(
+                        f"Dimension mismatch: expected {self.embedding_dimensions}, "
+                        f"got {self.embeddings.shape[1]}"
+                    )
                     return False
             
-            # Check metadata consistency
+            # Check document structure
             for i, doc in enumerate(self.documents):
                 if 'metadata' not in doc or 'page_content' not in doc:
                     logger.error(f"Invalid document structure at index {i}")
