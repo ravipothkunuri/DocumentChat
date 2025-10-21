@@ -1005,7 +1005,7 @@ def get_available_models() -> tuple[List[str], List[str]]:
         
         if response.status_code == 200:
             data = response.json()
-            models = [model['name'].split(':')[0] for model in data.get('models', [])]
+            models = [model['name'] for model in data.get('models', [])]
             
             embedding_models = [m for m in models if 'embed' in m.lower() or 'nomic' in m.lower()]
             llm_models = [m for m in models if 'embed' not in m.lower()]
