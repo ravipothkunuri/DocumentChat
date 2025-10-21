@@ -170,6 +170,9 @@ def init_session_state():
     
     if 'confirm_clear' not in st.session_state:
         st.session_state.confirm_clear = False
+    
+    if 'uploader_key' not in st.session_state:
+        st.session_state.uploader_key = 0
 
 def get_current_chat_history() -> List[Dict]:
     """Get chat history for currently selected document"""
@@ -280,6 +283,11 @@ def upload_files(files: List, api_client: RAGAPIClient):
         if uploaded_doc_names and not st.session_state.selected_document:
             st.session_state.selected_document = uploaded_doc_names[0]
         
+        # Clear the file uploader by incrementing its key
+        if 'uploader_key' not in st.session_state:
+            st.session_state.uploader_key = 0
+        st.session_state.uploader_key += 1
+        
         time.sleep(1.5)
         st.rerun()
 
@@ -327,13 +335,13 @@ def render_sidebar(api_client: RAGAPIClient):
         st.markdown("---")
         st.subheader("📤 Upload Documents")
         
-        # Always show file uploader - this fixes the UI issue
+        # Use dynamic key to reset file uploader after successful upload
         uploaded_files = st.file_uploader(
             "Choose files",
             type=ALLOWED_EXTENSIONS,
             accept_multiple_files=True,
             help=f"Supported: {', '.join(ALLOWED_EXTENSIONS).upper()} (max {MAX_FILE_SIZE_MB}MB each)",
-            key="file_uploader"
+            key=f"file_uploader_{st.session_state.uploader_key}"
         )
         
         # Show process button only when files are selected
