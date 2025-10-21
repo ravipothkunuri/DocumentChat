@@ -138,10 +138,29 @@ def apply_custom_css():
     .status-error { background-color: #f8d7da; color: #721c24; }
     .status-info { background-color: #d1ecf1; color: #0c5460; }
     
-    .doc-selector {
-        background-color: #f8f9fa;
-        padding: 0.5rem;
+    .doc-card {
+        padding: 1rem;
         border-radius: 0.5rem;
+        margin-bottom: 0.5rem;
+        border: 2px solid transparent;
+        transition: all 0.3s ease;
+    }
+    
+    .doc-card:hover {
+        background-color: #f8f9fa;
+        cursor: pointer;
+    }
+    
+    .doc-card-selected {
+        background-color: #d4edda;
+        border: 2px solid #28a745;
+        box-shadow: 0 2px 4px rgba(40, 167, 69, 0.2);
+    }
+    
+    .section-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
         margin-bottom: 1rem;
     }
     
@@ -206,51 +225,53 @@ def render_document_card(doc: Dict, api_client: RAGAPIClient):
     doc_name = doc['filename']
     is_selected = st.session_state.selected_document == doc_name
     
-    expander_label = f"{'📘' if is_selected else '📄'} {doc_name}"
+    # Create a container with custom styling
+    card_class = "doc-card doc-card-selected" if is_selected else "doc-card"
     
-    with st.expander(expander_label, expanded=False):
-        col1, col2 = st.columns([3, 1])
-        
-        with col1:
-            st.caption(f"**Type:** {doc['type'].upper()}")
-            st.caption(f"**Size:** {doc['size']:,} bytes")
-            st.caption(f"**Chunks:** {doc['chunks']}")
-            st.caption(f"**Uploaded:** {doc['uploaded_at'][:19]}")
-            
-            # Show message count if chat exists
-            if doc_name in st.session_state.document_chats:
-                msg_count = len(st.session_state.document_chats[doc_name])
-                if msg_count > 0:
-                    st.caption(f"**Messages:** {msg_count}")
-        
-        with col2:
-            # Select button
-            if st.button("💬" if not is_selected else "✓", 
-                        key=f"select_{doc_name}", 
-                        help="Chat with this document",
-                        use_container_width=True,
-                        type="primary" if is_selected else "secondary"):
-                st.session_state.selected_document = doc_name
+    col1, col2 = st.columns([5, 1])
+    
+    with col1:
+        # Make the entire card clickable
+        if st.button(
+            f"{'📘' if is_selected else '📄'} **{doc_name}**",
+            key=f"select_{doc_name}",
+            use_container_width=True,
+            type="primary" if is_selected else "secondary"
+        ):
+            st.session_state.selected_document = doc_name
+            st.rerun()
+    
+    with col2:
+        # Delete button with X
+        if st.button("✕", key=f"delete_{doc_name}", 
+                   help="Delete document",
+                   use_container_width=True,
+                   type="secondary"):
+            status_code, response = api_client.delete_document(doc_name)
+            if status_code == 200:
+                # Clean up chat history for deleted document
+                if doc_name in st.session_state.document_chats:
+                    del st.session_state.document_chats[doc_name]
+                
+                # Clear selection if this was the selected document
+                if st.session_state.selected_document == doc_name:
+                    st.session_state.selected_document = None
+                
+                st.success(f"✅ Deleted")
+                time.sleep(0.5)
                 st.rerun()
-            
-            # Delete button
-            if st.button("🗑️", key=f"delete_{doc_name}", 
-                       help="Delete document", use_container_width=True):
-                status_code, response = api_client.delete_document(doc_name)
-                if status_code == 200:
-                    # Clean up chat history for deleted document
-                    if doc_name in st.session_state.document_chats:
-                        del st.session_state.document_chats[doc_name]
-                    
-                    # Clear selection if this was the selected document
-                    if st.session_state.selected_document == doc_name:
-                        st.session_state.selected_document = None
-                    
-                    st.success(f"✅ Deleted")
-                    time.sleep(0.5)
-                    st.rerun()
-                else:
-                    st.error(f"❌ {response.get('message', 'Failed')}")
+            else:
+                st.error(f"❌ {response.get('message', 'Failed')}")
+    
+    # Show details in small text below
+    if is_selected:
+        st.caption(f"📊 {doc['chunks']} chunks • {doc['size']:,} bytes • {doc['type'].upper()}")
+        if doc_name in st.session_state.document_chats:
+            msg_count = len(st.session_state.document_chats[doc_name])
+            if msg_count > 0:
+                st.caption(f"💬 {msg_count} messages")
+    
+    st.markdown("---")
 
 
 def upload_files(files: List, api_client: RAGAPIClient):
@@ -305,30 +326,34 @@ def render_sidebar(api_client: RAGAPIClient):
             st.info(f"📊 {len(documents)} document(s) loaded")
         
         st.markdown("---")
-        st.subheader("📖 Your Documents")
+        
+        # Section header with Clear All button
+        col1, col2 = st.columns([3, 1])
+        with col1:
+            st.subheader("📖 Your Documents")
+        with col2:
+            if documents:
+                if st.button("🗑️", key="clear_all_btn", help="Clear all documents", use_container_width=True):
+                    if st.session_state.get('confirm_clear', False):
+                        with st.spinner("Clearing..."):
+                            status_code, response = api_client.clear_all_documents()
+                        if status_code == 200:
+                            # Clear all chat histories
+                            st.session_state.document_chats = {}
+                            st.session_state.selected_document = None
+                            st.success("✅ Cleared!")
+                            st.session_state.confirm_clear = False
+                            time.sleep(0.5)
+                            st.rerun()
+                        else:
+                            st.error(f"❌ {response.get('message')}")
+                    else:
+                        st.session_state.confirm_clear = True
+                        st.warning("⚠️ Click again")
         
         if documents:
             for doc in documents:
                 render_document_card(doc, api_client)
-            
-            st.markdown("---")
-            if st.button("🗑️ Clear All", use_container_width=True, type="secondary"):
-                if st.session_state.get('confirm_clear', False):
-                    with st.spinner("Clearing..."):
-                        status_code, response = api_client.clear_all_documents()
-                    if status_code == 200:
-                        # Clear all chat histories
-                        st.session_state.document_chats = {}
-                        st.session_state.selected_document = None
-                        st.success("✅ Cleared!")
-                        st.session_state.confirm_clear = False
-                        time.sleep(0.5)
-                        st.rerun()
-                    else:
-                        st.error(f"❌ {response.get('message')}")
-                else:
-                    st.session_state.confirm_clear = True
-                    st.warning("⚠️ Click again to confirm")
         else:
             st.info("💡 No documents yet. Upload below to get started!")
         
@@ -396,10 +421,6 @@ def render_chat_interface(api_client: RAGAPIClient, health_data: Dict, selected_
         for message in chat_history:
             with st.chat_message(message["role"]):
                 st.markdown(message["content"])
-                
-                if message["role"] == "assistant" and message.get("endpoint_type"):
-                    endpoint_badge = f'<span class="status-badge status-info">Endpoint: {message["endpoint_type"]}</span>'
-                    st.markdown(endpoint_badge, unsafe_allow_html=True)
     
     if prompt := st.chat_input(f"💭 Ask about {st.session_state.selected_document}..."):
         handle_chat_input(prompt, api_client, selected_model)
@@ -446,10 +467,6 @@ def handle_chat_input(prompt: str, api_client: RAGAPIClient, model: str):
                 "timestamp": datetime.now().isoformat()
             }
             add_message_to_current_chat(assistant_message)
-            
-            if endpoint_type:
-                endpoint_badge = f'<span class="status-badge status-info">Endpoint: {endpoint_type}</span>'
-                st.markdown(endpoint_badge, unsafe_allow_html=True)
         
         except Exception as e:
             error_msg = f"❌ Error: {str(e)}"
