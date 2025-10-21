@@ -65,7 +65,7 @@ class RAGAPIClient:
         """Upload a file to the backend"""
         try:
             files = {"file": (file.name, file, file.type)}
-            response = self.session.post(f"{self.base_url}/upload", files=files, timeout=60)
+            response = self.session.post(f"{self.base_url}/upload", files=files, timeout=120)
             return response.status_code, response.json() if response.content else {}
         except Exception as e:
             return 500, {"message": f"Upload error: {str(e)}"}
@@ -104,7 +104,7 @@ class RAGAPIClient:
 # ============================================================================
 
 def show_toast(message: str, type: str = "info"):
-    """Display toast notification independent of sidebar"""
+    """Display toast notification with manual dismiss"""
     toast_colors = {
         "success": ("#d4edda", "#155724", "#28a745"),
         "error": ("#f8d7da", "#721c24", "#dc3545"),
@@ -114,14 +114,18 @@ def show_toast(message: str, type: str = "info"):
     
     bg_color, text_color, border_color = toast_colors.get(type, toast_colors["info"])
     
+    # Generate unique ID for this toast
+    toast_id = f"toast-{int(time.time() * 1000)}"
+    
     toast_html = f"""
-    <div id="toast-notification" style="
+    <div id="{toast_id}" style="
         position: fixed;
         top: 20px;
         right: 20px;
         background: {bg_color};
         color: {text_color};
         padding: 16px 24px;
+        padding-right: 48px;
         border-radius: 12px;
         border-left: 4px solid {border_color};
         box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
@@ -129,15 +133,28 @@ def show_toast(message: str, type: str = "info"):
         min-width: 250px;
         max-width: 400px;
         font-weight: 500;
+        display: flex;
+        align-items: center;
+        position: relative;
     ">
-        {message}
+        <span style="flex: 1;">{message}</span>
+        <button onclick="document.getElementById('{toast_id}').remove()" style="
+            position: absolute;
+            right: 12px;
+            top: 50%;
+            transform: translateY(-50%);
+            background: transparent;
+            border: none;
+            color: {text_color};
+            font-size: 20px;
+            font-weight: bold;
+            cursor: pointer;
+            padding: 4px 8px;
+            line-height: 1;
+            opacity: 0.7;
+            transition: opacity 0.2s;
+        " onmouseover="this.style.opacity='1'" onmouseout="this.style.opacity='0.7'">×</button>
     </div>
-    <script>
-        setTimeout(function() {{
-            var toast = document.getElementById('toast-notification');
-            if (toast) toast.remove();
-        }}, 3000);
-    </script>
     """
     st.markdown(toast_html, unsafe_allow_html=True)
 
@@ -146,17 +163,37 @@ def show_toast(message: str, type: str = "info"):
 # ============================================================================
 
 def apply_custom_css():
-    """Apply custom CSS - Light mode only"""
+    """Apply custom CSS - Force light mode with comprehensive overrides"""
     st.markdown("""
     <style>
-    /* Force light mode */
-    [data-theme="dark"] {
-        filter: invert(0) !important;
+    /* CRITICAL: Force light mode for all elements */
+    :root, [data-theme="light"], [data-theme="dark"] {
+        --background-color: #ffffff !important;
+        --text-color: #000000 !important;
+        --secondary-background-color: #f8f9fa !important;
+        --primary-color: #667eea !important;
     }
     
-    body, .stApp {
+    /* Force light mode on body and app container */
+    html, body, .stApp, [data-testid="stAppViewContainer"], 
+    [data-testid="stApp"], section[data-testid="stMain"],
+    [data-testid="stMainBlockContainer"], .main {
         background-color: #ffffff !important;
         color: #000000 !important;
+    }
+    
+    /* Override dark mode filter */
+    [data-theme="dark"], [data-theme="dark"] * {
+        filter: none !important;
+        background-color: #ffffff !important;
+        color: #000000 !important;
+    }
+    
+    /* Force light text on all text elements */
+    p, span, div, label, h1, h2, h3, h4, h5, h6, 
+    .stMarkdown, .stText, .stCaption {
+        color: #000000 !important;
+        background-color: transparent !important;
     }
     
     /* Main header styling */
@@ -176,6 +213,8 @@ def apply_custom_css():
         border-radius: 8px;
         font-weight: 500;
         border: 2px solid transparent;
+        background-color: #ffffff !important;
+        color: #000000 !important;
     }
     
     .stButton > button:hover {
@@ -184,26 +223,26 @@ def apply_custom_css():
     
     /* Primary button */
     .stButton > button[kind="primary"] {
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%) !important;
         border: none;
-        color: white;
+        color: white !important;
     }
     
     .stButton > button[kind="primary"]:hover {
-        background: linear-gradient(135deg, #764ba2 0%, #667eea 100%);
+        background: linear-gradient(135deg, #764ba2 0%, #667eea 100%) !important;
         box-shadow: 0 6px 20px rgba(102, 126, 234, 0.4);
     }
     
     /* Secondary button */
     .stButton > button[kind="secondary"] {
-        background: #f8f9fa;
-        border: 2px solid #e9ecef;
-        color: #495057;
+        background: #f8f9fa !important;
+        border: 2px solid #e9ecef !important;
+        color: #495057 !important;
     }
     
     .stButton > button[kind="secondary"]:hover {
-        background: #e9ecef;
-        border-color: #dee2e6;
+        background: #e9ecef !important;
+        border-color: #dee2e6 !important;
     }
     
     /* Document card styling */
@@ -212,24 +251,24 @@ def apply_custom_css():
         border-radius: 12px;
         margin-bottom: 0.75rem;
         border: 2px solid rgba(0, 0, 0, 0.1);
-        background: rgba(248, 249, 250, 0.5);
+        background: rgba(248, 249, 250, 0.5) !important;
         box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
     }
     
     .doc-card:hover {
-        background-color: rgba(233, 236, 239, 0.8);
+        background-color: rgba(233, 236, 239, 0.8) !important;
         border-color: rgba(0, 0, 0, 0.15);
         box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
     }
     
     .doc-card-selected {
-        background: linear-gradient(135deg, rgba(76, 175, 80, 0.15) 0%, rgba(76, 175, 80, 0.25) 100%);
+        background: linear-gradient(135deg, rgba(76, 175, 80, 0.15) 0%, rgba(76, 175, 80, 0.25) 100%) !important;
         border: 2px solid #4caf50;
         box-shadow: 0 4px 16px rgba(76, 175, 80, 0.3);
     }
     
     .doc-card-selected:hover {
-        background: linear-gradient(135deg, rgba(76, 175, 80, 0.25) 0%, rgba(76, 175, 80, 0.35) 100%);
+        background: linear-gradient(135deg, rgba(76, 175, 80, 0.25) 0%, rgba(76, 175, 80, 0.35) 100%) !important;
         box-shadow: 0 6px 20px rgba(76, 175, 80, 0.35);
     }
     
@@ -238,13 +277,17 @@ def apply_custom_css():
         width: 320px !important;
         min-width: 320px !important;
         max-width: 320px !important;
-        background: #ffffff;
+        background: #ffffff !important;
         border-right: 1px solid rgba(0, 0, 0, 0.1);
     }
     
     section[data-testid="stSidebar"] > div {
         width: 320px !important;
-        background: #ffffff;
+        background: #ffffff !important;
+    }
+    
+    section[data-testid="stSidebar"] * {
+        color: #000000 !important;
     }
     
     /* Delete button - Perfectly centered with fixed width */
@@ -274,18 +317,28 @@ def apply_custom_css():
         border: 2px dashed #cbd5e0;
         border-radius: 12px;
         padding: 1.5rem;
-        background: #f7fafc;
+        background: #f7fafc !important;
     }
     
     .stFileUploader:hover {
         border-color: #667eea;
-        background: #edf2f7;
+        background: #edf2f7 !important;
+    }
+    
+    .stFileUploader label, .stFileUploader * {
+        color: #000000 !important;
     }
     
     /* Chat input styling */
     .stChatInput > div {
         border-radius: 12px;
         border: 2px solid #e9ecef;
+        background: #ffffff !important;
+    }
+    
+    .stChatInput input {
+        color: #000000 !important;
+        background: #ffffff !important;
     }
     
     .stChatInput > div:focus-within {
@@ -298,20 +351,56 @@ def apply_custom_css():
         border-radius: 12px;
         border-left: 4px solid;
         padding: 1rem 1.25rem;
+        background: #ffffff !important;
+        color: #000000 !important;
+    }
+    
+    /* Info alert */
+    [data-testid="stNotification"], .stInfo {
+        background-color: #d1ecf1 !important;
+        color: #0c5460 !important;
+        border-color: #17a2b8 !important;
+    }
+    
+    /* Warning alert */
+    .stWarning {
+        background-color: #fff3cd !important;
+        color: #856404 !important;
+        border-color: #ffc107 !important;
+    }
+    
+    /* Error alert */
+    .stError {
+        background-color: #f8d7da !important;
+        color: #721c24 !important;
+        border-color: #dc3545 !important;
+    }
+    
+    /* Success alert */
+    .stSuccess {
+        background-color: #d4edda !important;
+        color: #155724 !important;
+        border-color: #28a745 !important;
     }
     
     /* Expander styling */
     .streamlit-expanderHeader {
         border-radius: 8px;
-        background: rgba(248, 249, 250, 0.8);
+        background: rgba(248, 249, 250, 0.8) !important;
         border: 1px solid rgba(0, 0, 0, 0.1);
         box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+        color: #000000 !important;
     }
     
     .streamlit-expanderHeader:hover {
-        background: rgba(233, 236, 239, 0.9);
+        background: rgba(233, 236, 239, 0.9) !important;
         border-color: rgba(0, 0, 0, 0.2);
         box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
+    }
+    
+    .streamlit-expanderContent {
+        background: #ffffff !important;
+        color: #000000 !important;
     }
     
     /* Progress bar */
@@ -324,6 +413,12 @@ def apply_custom_css():
     .stSelectbox > div > div {
         border-radius: 8px;
         border: 2px solid #e9ecef;
+        background: #ffffff !important;
+    }
+    
+    .stSelectbox select, .stSelectbox input {
+        color: #000000 !important;
+        background: #ffffff !important;
     }
     
     .stSelectbox > div > div:focus-within {
@@ -345,6 +440,17 @@ def apply_custom_css():
         padding: 1rem;
         margin-bottom: 0.75rem;
         box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+        background: #ffffff !important;
+        color: #000000 !important;
+    }
+    
+    [data-testid="stChatMessage"] {
+        background: #ffffff !important;
+        color: #000000 !important;
+    }
+    
+    [data-testid="stChatMessageContent"] * {
+        color: #000000 !important;
     }
     
     /* Loading animation */
@@ -400,8 +506,19 @@ def apply_custom_css():
     
     /* Caption styling */
     .stCaption {
-        color: #6c757d;
+        color: #6c757d !important;
         font-size: 0.875rem;
+    }
+    
+    /* Input fields */
+    input, textarea, select {
+        background: #ffffff !important;
+        color: #000000 !important;
+    }
+    
+    /* Markdown content */
+    .stMarkdown, .stMarkdown * {
+        color: #000000 !important;
     }
     </style>
     """, unsafe_allow_html=True)
@@ -478,7 +595,7 @@ def render_document_card(doc: Dict, api_client: RAGAPIClient):
                     st.session_state.selected_document = None
                 
                 show_toast(f"✅ Deleted {doc_name}", "success")
-                time.sleep(0.3)
+                time.sleep(0.5)
                 st.rerun()
             else:
                 show_toast(f"❌ {response.get('message', 'Delete failed')}", "error")
@@ -493,14 +610,21 @@ def render_document_card(doc: Dict, api_client: RAGAPIClient):
     st.markdown("---")
 
 def upload_files(files: List, api_client: RAGAPIClient):
-    """Handle file upload"""
+    """Handle file upload with improved error handling"""
     success_count = 0
     total = len(files)
     uploaded_names = []
     
     progress = st.progress(0)
+    status_placeholder = st.empty()
     
     for i, file in enumerate(files):
+        status_placeholder.info(f"📤 Processing {file.name}...")
+        
+        # Add small delay before first upload to ensure backend is ready
+        if i == 0:
+            time.sleep(0.5)
+        
         status_code, response = api_client.upload_file(file)
         
         if status_code == 200:
@@ -508,9 +632,12 @@ def upload_files(files: List, api_client: RAGAPIClient):
             success_count += 1
             uploaded_names.append(file.name)
         else:
-            show_toast(f"❌ {file.name}: {response.get('message', 'Failed')}", "error")
+            error_msg = response.get('message', 'Upload failed')
+            show_toast(f"❌ {file.name}: {error_msg}", "error")
         
         progress.progress((i + 1) / total)
+    
+    status_placeholder.empty()
     
     # Auto-select first uploaded document
     if uploaded_names and not st.session_state.selected_document:
@@ -685,7 +812,7 @@ def main():
     
     with col1:
         title = st.session_state.selected_document or "Chat with Documents"
-        st.markdown(f'<h2 style="margin-bottom: 0;">💬 {title}</h2>', unsafe_allow_html=True)
+        st.markdown(f'<h2 style="margin-bottom: 0; color: #000000;">💬 {title}</h2>', unsafe_allow_html=True)
     
     with col2:
         models_data = api_client.get_models()
