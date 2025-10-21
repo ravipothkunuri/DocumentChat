@@ -141,6 +141,14 @@ def apply_custom_css():
     .status-error { background-color: #f8d7da; color: #721c24; }
     .status-info { background-color: #d1ecf1; color: #0c5460; }
     
+    /* Dark mode support */
+    [data-theme="dark"] {
+        --bg-primary: #1e1e1e;
+        --bg-secondary: #2d2d2d;
+        --text-primary: #e0e0e0;
+        --border-color: #404040;
+    }
+    
     /* Enhanced button styling */
     .stButton > button {
         transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
@@ -182,66 +190,69 @@ def apply_custom_css():
         border-color: #dee2e6;
     }
     
-    /* Document card styling */
+    /* Document card styling - dark mode compatible */
     .doc-card {
         padding: 1rem;
         border-radius: 12px;
         margin-bottom: 0.75rem;
-        border: 2px solid #e9ecef;
-        background: #ffffff;
+        border: 2px solid rgba(0, 0, 0, 0.1);
+        background: rgba(255, 255, 255, 0.05);
         transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
         box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
     }
     
     .doc-card:hover {
-        background-color: #f8f9fa;
-        border-color: #dee2e6;
+        background-color: rgba(0, 0, 0, 0.02);
+        border-color: rgba(0, 0, 0, 0.15);
         box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
         transform: translateY(-2px);
     }
     
     .doc-card-selected {
-        background: linear-gradient(135deg, #e8f5e9 0%, #c8e6c9 100%);
+        background: linear-gradient(135deg, rgba(76, 175, 80, 0.15) 0%, rgba(76, 175, 80, 0.25) 100%);
         border: 2px solid #4caf50;
         box-shadow: 0 4px 16px rgba(76, 175, 80, 0.25);
         transform: translateY(-2px);
     }
     
     .doc-card-selected:hover {
-        background: linear-gradient(135deg, #c8e6c9 0%, #a5d6a7 100%);
+        background: linear-gradient(135deg, rgba(76, 175, 80, 0.25) 0%, rgba(76, 175, 80, 0.35) 100%);
         box-shadow: 0 6px 20px rgba(76, 175, 80, 0.3);
     }
     
-    /* Delete button styling */
-    div[data-testid="column"]:last-child .stButton > button {
-        background: #fff5f5;
-        border: 2px solid #feb2b2;
-        color: #c53030;
-        font-weight: 600;
-        padding: 0.25rem 0.5rem;
-        min-height: 38px;
+    /* Delete button styling - fixed for both light and dark modes */
+    button[key*="delete_"] {
+        background: rgba(239, 68, 68, 0.1) !important;
+        border: 2px solid rgba(239, 68, 68, 0.5) !important;
+        color: #ef4444 !important;
+        font-weight: 700 !important;
+        font-size: 1.1rem !important;
+        padding: 0.4rem 0.6rem !important;
+        min-height: 40px !important;
+        line-height: 1 !important;
     }
     
-    div[data-testid="column"]:last-child .stButton > button:hover {
-        background: #fed7d7;
-        border-color: #fc8181;
-        color: #9b2c2c;
-        transform: scale(1.05);
+    button[key*="delete_"]:hover {
+        background: rgba(239, 68, 68, 0.2) !important;
+        border-color: #ef4444 !important;
+        color: #dc2626 !important;
+        transform: scale(1.08) !important;
     }
     
-    /* Clear all button styling */
+    /* Clear all button styling - changed from trash to sweep icon */
     button[key="clear_all_btn"] {
-        background: #fff5f5 !important;
-        border: 2px solid #feb2b2 !important;
-        color: #c53030 !important;
-        font-size: 1.2rem !important;
-        padding: 0.25rem !important;
+        background: rgba(239, 68, 68, 0.1) !important;
+        border: 2px solid rgba(239, 68, 68, 0.5) !important;
+        color: #ef4444 !important;
+        font-size: 1.1rem !important;
+        padding: 0.3rem !important;
+        font-weight: 700 !important;
     }
     
     button[key="clear_all_btn"]:hover {
-        background: #fed7d7 !important;
-        border-color: #fc8181 !important;
-        transform: rotate(15deg) scale(1.1) !important;
+        background: rgba(239, 68, 68, 0.2) !important;
+        border-color: #ef4444 !important;
+        transform: scale(1.1) !important;
     }
     
     /* File uploader styling */
@@ -572,7 +583,7 @@ def render_sidebar(api_client: RAGAPIClient):
             st.subheader("📖 Your Documents")
         with col2:
             if documents:
-                if st.button("🗑️", key="clear_all_btn", help="Clear all documents", use_container_width=True):
+                if st.button("🧹", key="clear_all_btn", help="Clear all documents", use_container_width=True):
                     if st.session_state.get('confirm_clear', False):
                         with st.spinner("Clearing..."):
                             status_code, response = api_client.clear_all_documents()
@@ -646,10 +657,9 @@ def render_chat_interface(api_client: RAGAPIClient, health_data: Dict, selected_
         st.warning("📄 **Please select a document** from the sidebar to start chatting.")
         return
     
+    # Show connection status in a compact way
     ollama_status = health_data.get('ollama_status', {}) if health_data else {}
-    if ollama_status.get('available'):
-        st.success(f"✓ Ollama Connected | 📘 Chatting with: **{st.session_state.selected_document}**")
-    else:
+    if not ollama_status.get('available'):
         st.error("✗ Ollama Unavailable")
     
     # Get chat history for current document
@@ -746,11 +756,14 @@ def main():
     
     render_sidebar(api_client)
     
-    # Header with model dropdown
+    # Header with document name and model dropdown
     col1, col2 = st.columns([4, 1])
     
     with col1:
-        st.markdown('<h2 style="margin-bottom: 0;">💬 Chat with Your Documents</h2>', unsafe_allow_html=True)
+        if st.session_state.selected_document:
+            st.markdown(f'<h2 style="margin-bottom: 0;">💬 {st.session_state.selected_document}</h2>', unsafe_allow_html=True)
+        else:
+            st.markdown('<h2 style="margin-bottom: 0;">💬 Chat with Your Documents</h2>', unsafe_allow_html=True)
     
     with col2:
         # Get available models
