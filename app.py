@@ -126,23 +126,12 @@ def show_toast(message: str, type: str = "info"):
         border-left: 4px solid {border_color};
         box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
         z-index: 9999;
-        animation: slideInRight 0.3s ease-out, fadeOut 0.3s ease-in 2.7s;
         min-width: 250px;
         max-width: 400px;
         font-weight: 500;
     ">
         {message}
     </div>
-    <style>
-        @keyframes slideInRight {{
-            from {{ transform: translateX(400px); opacity: 0; }}
-            to {{ transform: translateX(0); opacity: 1; }}
-        }}
-        @keyframes fadeOut {{
-            from {{ opacity: 1; }}
-            to {{ opacity: 0; }}
-        }}
-    </style>
     <script>
         setTimeout(function() {{
             var toast = document.getElementById('toast-notification');
@@ -184,20 +173,13 @@ def apply_custom_css():
     
     /* Enhanced button styling */
     .stButton > button {
-        transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
         border-radius: 8px;
         font-weight: 500;
         border: 2px solid transparent;
     }
     
     .stButton > button:hover {
-        transform: translateY(-2px);
         box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
-    }
-    
-    .stButton > button:active {
-        transform: translateY(0);
-        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
     }
     
     /* Primary button */
@@ -231,7 +213,6 @@ def apply_custom_css():
         margin-bottom: 0.75rem;
         border: 2px solid rgba(0, 0, 0, 0.1);
         background: rgba(248, 249, 250, 0.5);
-        transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
         box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
     }
     
@@ -239,14 +220,12 @@ def apply_custom_css():
         background-color: rgba(233, 236, 239, 0.8);
         border-color: rgba(0, 0, 0, 0.15);
         box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
-        transform: translateY(-2px);
     }
     
     .doc-card-selected {
         background: linear-gradient(135deg, rgba(76, 175, 80, 0.15) 0%, rgba(76, 175, 80, 0.25) 100%);
         border: 2px solid #4caf50;
         box-shadow: 0 4px 16px rgba(76, 175, 80, 0.3);
-        transform: translateY(-2px);
     }
     
     .doc-card-selected:hover {
@@ -288,7 +267,6 @@ def apply_custom_css():
         background: rgba(239, 68, 68, 0.2) !important;
         border-color: #ef4444 !important;
         color: #dc2626 !important;
-        transform: scale(1.08) !important;
     }
     
     /* File uploader styling */
@@ -297,7 +275,6 @@ def apply_custom_css():
         border-radius: 12px;
         padding: 1.5rem;
         background: #f7fafc;
-        transition: all 0.3s ease;
     }
     
     .stFileUploader:hover {
@@ -309,7 +286,6 @@ def apply_custom_css():
     .stChatInput > div {
         border-radius: 12px;
         border: 2px solid #e9ecef;
-        transition: all 0.3s ease;
     }
     
     .stChatInput > div:focus-within {
@@ -322,18 +298,6 @@ def apply_custom_css():
         border-radius: 12px;
         border-left: 4px solid;
         padding: 1rem 1.25rem;
-        animation: slideIn 0.3s ease-out;
-    }
-    
-    @keyframes slideIn {
-        from {
-            opacity: 0;
-            transform: translateY(-10px);
-        }
-        to {
-            opacity: 1;
-            transform: translateY(0);
-        }
     }
     
     /* Expander styling */
@@ -341,7 +305,6 @@ def apply_custom_css():
         border-radius: 8px;
         background: rgba(248, 249, 250, 0.8);
         border: 1px solid rgba(0, 0, 0, 0.1);
-        transition: all 0.3s ease;
         box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
     }
     
@@ -361,7 +324,6 @@ def apply_custom_css():
     .stSelectbox > div > div {
         border-radius: 8px;
         border: 2px solid #e9ecef;
-        transition: all 0.3s ease;
     }
     
     .stSelectbox > div > div:focus-within {
@@ -382,19 +344,7 @@ def apply_custom_css():
         border-radius: 12px;
         padding: 1rem;
         margin-bottom: 0.75rem;
-        animation: messageSlideIn 0.3s ease-out;
         box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
-    }
-    
-    @keyframes messageSlideIn {
-        from {
-            opacity: 0;
-            transform: translateX(-20px);
-        }
-        to {
-            opacity: 1;
-            transform: translateX(0);
-        }
     }
     
     /* Loading animation */
@@ -528,7 +478,7 @@ def render_document_card(doc: Dict, api_client: RAGAPIClient):
                     st.session_state.selected_document = None
                 
                 show_toast(f"✅ Deleted {doc_name}", "success")
-                time.sleep(0.5)
+                time.sleep(0.3)
                 st.rerun()
             else:
                 show_toast(f"❌ {response.get('message', 'Delete failed')}", "error")
@@ -549,11 +499,8 @@ def upload_files(files: List, api_client: RAGAPIClient):
     uploaded_names = []
     
     progress = st.progress(0)
-    status = st.empty()
     
     for i, file in enumerate(files):
-        status.text(f"⏳ Uploading {file.name}...")
-        
         status_code, response = api_client.upload_file(file)
         
         if status_code == 200:
@@ -565,14 +512,12 @@ def upload_files(files: List, api_client: RAGAPIClient):
         
         progress.progress((i + 1) / total)
     
-    status.text(f"✨ Complete: {success_count}/{total}")
-    
     # Auto-select first uploaded document
     if uploaded_names and not st.session_state.selected_document:
         st.session_state.selected_document = uploaded_names[0]
     
     st.session_state.uploader_key += 1
-    time.sleep(1)
+    time.sleep(0.5)
     st.rerun()
 
 # ============================================================================
