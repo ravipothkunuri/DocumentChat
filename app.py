@@ -65,7 +65,7 @@ class RAGAPIClient:
         """Upload a file to the backend"""
         try:
             files = {"file": (file.name, file, file.type)}
-            response = self.session.post(f"{self.base_url}/upload", files=files, timeout=120)
+            response = self.session.post(f"{self.base_url}/upload", files=files, timeout=60)
             return response.status_code, response.json() if response.content else {}
         except Exception as e:
             return 500, {"message": f"Upload error: {str(e)}"}
@@ -100,102 +100,82 @@ class RAGAPIClient:
             yield {"type": "error", "message": str(e)}
 
 # ============================================================================
-# TOAST NOTIFICATIONS
+# TOAST COMPONENT
 # ============================================================================
 
-def show_toast(message: str, type: str = "info"):
-    """Display toast notification with manual dismiss"""
-    toast_colors = {
+class ToastNotification:
+    """Independent toast notification system"""
+    
+    COLORS = {
         "success": ("#d4edda", "#155724", "#28a745"),
         "error": ("#f8d7da", "#721c24", "#dc3545"),
         "warning": ("#fff3cd", "#856404", "#ffc107"),
         "info": ("#d1ecf1", "#0c5460", "#17a2b8")
     }
     
-    bg_color, text_color, border_color = toast_colors.get(type, toast_colors["info"])
-    
-    # Generate unique ID for this toast
-    toast_id = f"toast-{int(time.time() * 1000)}"
-    
-    toast_html = f"""
-    <div id="{toast_id}" style="
-        position: fixed;
-        top: 20px;
-        right: 20px;
-        background: {bg_color};
-        color: {text_color};
-        padding: 16px 24px;
-        padding-right: 48px;
-        border-radius: 12px;
-        border-left: 4px solid {border_color};
-        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
-        z-index: 9999;
-        min-width: 250px;
-        max-width: 400px;
-        font-weight: 500;
-        display: flex;
-        align-items: center;
-        position: relative;
-    ">
-        <span style="flex: 1;">{message}</span>
-        <button onclick="document.getElementById('{toast_id}').remove()" style="
-            position: absolute;
-            right: 12px;
-            top: 50%;
-            transform: translateY(-50%);
-            background: transparent;
-            border: none;
-            color: {text_color};
-            font-size: 20px;
-            font-weight: bold;
-            cursor: pointer;
-            padding: 4px 8px;
-            line-height: 1;
-            opacity: 0.7;
-            transition: opacity 0.2s;
-        " onmouseover="this.style.opacity='1'" onmouseout="this.style.opacity='0.7'">×</button>
-    </div>
-    """
-    st.markdown(toast_html, unsafe_allow_html=True)
+    @staticmethod
+    def show(message: str, toast_type: str = "info"):
+        """Display toast notification on right side of app"""
+        bg_color, text_color, border_color = ToastNotification.COLORS.get(
+            toast_type, ToastNotification.COLORS["info"]
+        )
+        
+        # Create unique container to prevent conflicts
+        toast_container = st.container()
+        
+        with toast_container:
+            st.markdown(f"""
+                <div id="toast-{id(message)}" style="
+                    position: fixed;
+                    top: 80px;
+                    right: 20px;
+                    background: {bg_color};
+                    color: {text_color};
+                    padding: 16px 24px;
+                    border-radius: 12px;
+                    border-left: 4px solid {border_color};
+                    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+                    z-index: 999999;
+                    min-width: 250px;
+                    max-width: 400px;
+                    font-weight: 500;
+                    animation: slideIn 0.3s ease-out;
+                ">
+                    {message}
+                </div>
+                <style>
+                    @keyframes slideIn {{
+                        from {{
+                            transform: translateX(400px);
+                            opacity: 0;
+                        }}
+                        to {{
+                            transform: translateX(0);
+                            opacity: 1;
+                        }}
+                    }}
+                </style>
+                <script>
+                    setTimeout(function() {{
+                        var toast = document.getElementById('toast-{id(message)}');
+                        if (toast) {{
+                            toast.style.animation = 'slideOut 0.3s ease-in';
+                            toast.style.transform = 'translateX(400px)';
+                            toast.style.opacity = '0';
+                            setTimeout(() => toast.remove(), 300);
+                        }}
+                    }}, 3000);
+                </script>
+            """, unsafe_allow_html=True)
 
 # ============================================================================
 # UI STYLING
 # ============================================================================
 
 def apply_custom_css():
-    """Apply custom CSS - Force light mode with comprehensive overrides"""
+    """Apply custom CSS - Respects system theme"""
     st.markdown("""
     <style>
-    /* CRITICAL: Force light mode for all elements */
-    :root, [data-theme="light"], [data-theme="dark"] {
-        --background-color: #ffffff !important;
-        --text-color: #000000 !important;
-        --secondary-background-color: #f8f9fa !important;
-        --primary-color: #667eea !important;
-    }
-    
-    /* Force light mode on body and app container */
-    html, body, .stApp, [data-testid="stAppViewContainer"], 
-    [data-testid="stApp"], section[data-testid="stMain"],
-    [data-testid="stMainBlockContainer"], .main {
-        background-color: #ffffff !important;
-        color: #000000 !important;
-    }
-    
-    /* Override dark mode filter */
-    [data-theme="dark"], [data-theme="dark"] * {
-        filter: none !important;
-        background-color: #ffffff !important;
-        color: #000000 !important;
-    }
-    
-    /* Force light text on all text elements */
-    p, span, div, label, h1, h2, h3, h4, h5, h6, 
-    .stMarkdown, .stText, .stCaption {
-        color: #000000 !important;
-        background-color: transparent !important;
-    }
-    
     /* Main header styling */
     .main-header {
         font-size: 2.5rem;
@@ -213,84 +193,38 @@ def apply_custom_css():
         border-radius: 8px;
         font-weight: 500;
         border: 2px solid transparent;
-        background-color: #ffffff !important;
-        color: #000000 !important;
+        transition: all 0.3s ease;
     }
     
     .stButton > button:hover {
         box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+        transform: translateY(-1px);
     }
     
     /* Primary button */
     .stButton > button[kind="primary"] {
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%) !important;
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
         border: none;
-        color: white !important;
+        color: white;
     }
     
     .stButton > button[kind="primary"]:hover {
-        background: linear-gradient(135deg, #764ba2 0%, #667eea 100%) !important;
+        background: linear-gradient(135deg, #764ba2 0%, #667eea 100%);
         box-shadow: 0 6px 20px rgba(102, 126, 234, 0.4);
     }
     
-    /* Secondary button */
-    .stButton > button[kind="secondary"] {
-        background: #f8f9fa !important;
-        border: 2px solid #e9ecef !important;
-        color: #495057 !important;
-    }
-    
-    .stButton > button[kind="secondary"]:hover {
-        background: #e9ecef !important;
-        border-color: #dee2e6 !important;
-    }
-    
-    /* Document card styling */
-    .doc-card {
-        padding: 1rem;
-        border-radius: 12px;
-        margin-bottom: 0.75rem;
-        border: 2px solid rgba(0, 0, 0, 0.1);
-        background: rgba(248, 249, 250, 0.5) !important;
-        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
-    }
-    
-    .doc-card:hover {
-        background-color: rgba(233, 236, 239, 0.8) !important;
-        border-color: rgba(0, 0, 0, 0.15);
-        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
-    }
-    
-    .doc-card-selected {
-        background: linear-gradient(135deg, rgba(76, 175, 80, 0.15) 0%, rgba(76, 175, 80, 0.25) 100%) !important;
-        border: 2px solid #4caf50;
-        box-shadow: 0 4px 16px rgba(76, 175, 80, 0.3);
-    }
-    
-    .doc-card-selected:hover {
-        background: linear-gradient(135deg, rgba(76, 175, 80, 0.25) 0%, rgba(76, 175, 80, 0.35) 100%) !important;
-        box-shadow: 0 6px 20px rgba(76, 175, 80, 0.35);
-    }
-    
-    /* Sidebar - Fixed width for proper button alignment */
+    /* Sidebar - Fixed width */
     section[data-testid="stSidebar"] {
         width: 320px !important;
         min-width: 320px !important;
         max-width: 320px !important;
-        background: #ffffff !important;
-        border-right: 1px solid rgba(0, 0, 0, 0.1);
     }
     
     section[data-testid="stSidebar"] > div {
         width: 320px !important;
-        background: #ffffff !important;
     }
     
-    section[data-testid="stSidebar"] * {
-        color: #000000 !important;
-    }
-    
-    /* Delete button - Perfectly centered with fixed width */
+    /* Delete button - Centered */
     button[key*="delete_"] {
         background: rgba(239, 68, 68, 0.1) !important;
         border: 2px solid rgba(239, 68, 68, 0.5) !important;
@@ -310,147 +244,12 @@ def apply_custom_css():
         background: rgba(239, 68, 68, 0.2) !important;
         border-color: #ef4444 !important;
         color: #dc2626 !important;
-    }
-    
-    /* File uploader styling */
-    .stFileUploader {
-        border: 2px dashed #cbd5e0;
-        border-radius: 12px;
-        padding: 1.5rem;
-        background: #f7fafc !important;
-    }
-    
-    .stFileUploader:hover {
-        border-color: #667eea;
-        background: #edf2f7 !important;
-    }
-    
-    .stFileUploader label, .stFileUploader * {
-        color: #000000 !important;
+        transform: scale(1.05);
     }
     
     /* Chat input styling */
     .stChatInput > div {
         border-radius: 12px;
-        border: 2px solid #e9ecef;
-        background: #ffffff !important;
-    }
-    
-    .stChatInput input {
-        color: #000000 !important;
-        background: #ffffff !important;
-    }
-    
-    .stChatInput > div:focus-within {
-        border-color: #667eea;
-        box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
-    }
-    
-    /* Alert boxes */
-    .stAlert {
-        border-radius: 12px;
-        border-left: 4px solid;
-        padding: 1rem 1.25rem;
-        background: #ffffff !important;
-        color: #000000 !important;
-    }
-    
-    /* Info alert */
-    [data-testid="stNotification"], .stInfo {
-        background-color: #d1ecf1 !important;
-        color: #0c5460 !important;
-        border-color: #17a2b8 !important;
-    }
-    
-    /* Warning alert */
-    .stWarning {
-        background-color: #fff3cd !important;
-        color: #856404 !important;
-        border-color: #ffc107 !important;
-    }
-    
-    /* Error alert */
-    .stError {
-        background-color: #f8d7da !important;
-        color: #721c24 !important;
-        border-color: #dc3545 !important;
-    }
-    
-    /* Success alert */
-    .stSuccess {
-        background-color: #d4edda !important;
-        color: #155724 !important;
-        border-color: #28a745 !important;
-    }
-    
-    /* Expander styling */
-    .streamlit-expanderHeader {
-        border-radius: 8px;
-        background: rgba(248, 249, 250, 0.8) !important;
-        border: 1px solid rgba(0, 0, 0, 0.1);
-        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
-        color: #000000 !important;
-    }
-    
-    .streamlit-expanderHeader:hover {
-        background: rgba(233, 236, 239, 0.9) !important;
-        border-color: rgba(0, 0, 0, 0.2);
-        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
-    }
-    
-    .streamlit-expanderContent {
-        background: #ffffff !important;
-        color: #000000 !important;
-    }
-    
-    /* Progress bar */
-    .stProgress > div > div {
-        background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
-        border-radius: 10px;
-    }
-    
-    /* Select box */
-    .stSelectbox > div > div {
-        border-radius: 8px;
-        border: 2px solid #e9ecef;
-        background: #ffffff !important;
-    }
-    
-    .stSelectbox select, .stSelectbox input {
-        color: #000000 !important;
-        background: #ffffff !important;
-    }
-    
-    .stSelectbox > div > div:focus-within {
-        border-color: #667eea;
-        box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
-    }
-    
-    /* Divider */
-    hr {
-        margin: 1.5rem 0;
-        border: none;
-        height: 2px;
-        background: linear-gradient(90deg, transparent 0%, #e9ecef 50%, transparent 100%);
-    }
-    
-    /* Chat message styling */
-    .stChatMessage {
-        border-radius: 12px;
-        padding: 1rem;
-        margin-bottom: 0.75rem;
-        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
-        background: #ffffff !important;
-        color: #000000 !important;
-    }
-    
-    [data-testid="stChatMessage"] {
-        background: #ffffff !important;
-        color: #000000 !important;
-    }
-    
-    [data-testid="stChatMessageContent"] * {
-        color: #000000 !important;
     }
     
     /* Loading animation */
@@ -503,23 +302,6 @@ def apply_custom_css():
     /* Hide Streamlit branding */
     #MainMenu {visibility: hidden;}
     footer {visibility: hidden;}
-    
-    /* Caption styling */
-    .stCaption {
-        color: #6c757d !important;
-        font-size: 0.875rem;
-    }
-    
-    /* Input fields */
-    input, textarea, select {
-        background: #ffffff !important;
-        color: #000000 !important;
-    }
-    
-    /* Markdown content */
-    .stMarkdown, .stMarkdown * {
-        color: #000000 !important;
-    }
     </style>
     """, unsafe_allow_html=True)
 
@@ -588,17 +370,16 @@ def render_document_card(doc: Dict, api_client: RAGAPIClient):
                    type="secondary"):
             status_code, response = api_client.delete_document(doc_name)
             if status_code == 200:
-                # Clean up
                 if doc_name in st.session_state.document_chats:
                     del st.session_state.document_chats[doc_name]
                 if st.session_state.selected_document == doc_name:
                     st.session_state.selected_document = None
                 
-                show_toast(f"✅ Deleted {doc_name}", "success")
-                time.sleep(0.5)
+                ToastNotification.show(f"✅ Deleted {doc_name}", "success")
+                time.sleep(0.3)
                 st.rerun()
             else:
-                show_toast(f"❌ {response.get('message', 'Delete failed')}", "error")
+                ToastNotification.show(f"❌ {response.get('message', 'Delete failed')}", "error")
     
     if is_selected:
         st.caption(f"📊 {doc['chunks']} chunks • {doc['size']:,} bytes • {doc['type'].upper()}")
@@ -610,36 +391,23 @@ def render_document_card(doc: Dict, api_client: RAGAPIClient):
     st.markdown("---")
 
 def upload_files(files: List, api_client: RAGAPIClient):
-    """Handle file upload with improved error handling"""
+    """Handle file upload"""
     success_count = 0
-    total = len(files)
     uploaded_names = []
-    
     progress = st.progress(0)
-    status_placeholder = st.empty()
     
     for i, file in enumerate(files):
-        status_placeholder.info(f"📤 Processing {file.name}...")
-        
-        # Add small delay before first upload to ensure backend is ready
-        if i == 0:
-            time.sleep(0.5)
-        
         status_code, response = api_client.upload_file(file)
         
         if status_code == 200:
-            show_toast(f"✅ {file.name}: {response.get('chunks', 0)} chunks", "success")
+            ToastNotification.show(f"✅ {file.name}: {response.get('chunks', 0)} chunks", "success")
             success_count += 1
             uploaded_names.append(file.name)
         else:
-            error_msg = response.get('message', 'Upload failed')
-            show_toast(f"❌ {file.name}: {error_msg}", "error")
+            ToastNotification.show(f"❌ {file.name}: {response.get('message', 'Failed')}", "error")
         
-        progress.progress((i + 1) / total)
+        progress.progress((i + 1) / len(files))
     
-    status_placeholder.empty()
-    
-    # Auto-select first uploaded document
     if uploaded_names and not st.session_state.selected_document:
         st.session_state.selected_document = uploaded_names[0]
     
@@ -712,24 +480,20 @@ def render_chat(api_client: RAGAPIClient, health_data: Dict, model: str):
         st.warning("📄 **Select a document** to start.")
         return
     
-    # Check Ollama status
     if health_data:
         ollama = health_data.get('ollama_status', {})
         if not ollama.get('available'):
-            show_toast("⚠️ Ollama unavailable", "warning")
+            ToastNotification.show("⚠️ Ollama unavailable", "warning")
     
-    # Display chat history
     for msg in get_current_chat():
         with st.chat_message(msg["role"]):
             st.markdown(msg["content"])
     
-    # Chat input
     if prompt := st.chat_input(f"💭 Ask about {st.session_state.selected_document}..."):
         handle_query(prompt, api_client, model)
 
 def handle_query(prompt: str, api_client: RAGAPIClient, model: str):
     """Handle chat query"""
-    # Add user message
     add_message({
         "role": "user",
         "content": prompt,
@@ -739,7 +503,6 @@ def handle_query(prompt: str, api_client: RAGAPIClient, model: str):
     with st.chat_message("user"):
         st.markdown(prompt)
     
-    # Get response
     with st.chat_message("assistant"):
         placeholder = st.empty()
         placeholder.markdown(
@@ -807,12 +570,11 @@ def main():
     
     render_sidebar(api_client)
     
-    # Header
     col1, col2 = st.columns([4, 1])
     
     with col1:
         title = st.session_state.selected_document or "Chat with Documents"
-        st.markdown(f'<h2 style="margin-bottom: 0; color: #000000;">💬 {title}</h2>', unsafe_allow_html=True)
+        st.markdown(f'<h2 style="margin-bottom: 0;">💬 {title}</h2>', unsafe_allow_html=True)
     
     with col2:
         models_data = api_client.get_models()
