@@ -74,10 +74,6 @@ class RAGAPIClient:
         """Delete a specific document"""
         return self._request('DELETE', f'/documents/{filename}', timeout=30)
     
-    def clear_all_documents(self) -> Tuple[int, Dict]:
-        """Clear all documents"""
-        return self._request('DELETE', '/clear', timeout=30)
-    
     def configure_system(self, config: Dict) -> Tuple[int, Dict]:
         """Update system configuration"""
         return self._request('POST', '/configure', json=config, timeout=30)
@@ -190,7 +186,7 @@ def apply_custom_css():
         border-color: #dee2e6;
     }
     
-    /* Document card styling - dark mode compatible */
+    /* Document card styling - dark mode compatible with uniform shadow */
     .doc-card {
         padding: 1rem;
         border-radius: 12px;
@@ -198,38 +194,50 @@ def apply_custom_css():
         border: 2px solid rgba(0, 0, 0, 0.1);
         background: rgba(255, 255, 255, 0.05);
         transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
     }
     
     .doc-card:hover {
         background-color: rgba(0, 0, 0, 0.02);
         border-color: rgba(0, 0, 0, 0.15);
-        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
         transform: translateY(-2px);
     }
     
     .doc-card-selected {
         background: linear-gradient(135deg, rgba(76, 175, 80, 0.15) 0%, rgba(76, 175, 80, 0.25) 100%);
         border: 2px solid #4caf50;
-        box-shadow: 0 4px 16px rgba(76, 175, 80, 0.25);
+        box-shadow: 0 4px 16px rgba(76, 175, 80, 0.3);
         transform: translateY(-2px);
     }
     
     .doc-card-selected:hover {
         background: linear-gradient(135deg, rgba(76, 175, 80, 0.25) 0%, rgba(76, 175, 80, 0.35) 100%);
-        box-shadow: 0 6px 20px rgba(76, 175, 80, 0.3);
+        box-shadow: 0 6px 20px rgba(76, 175, 80, 0.35);
     }
     
-    /* Delete button styling - fixed for both light and dark modes */
+    /* Delete button styling - perfectly centered */
     button[key*="delete_"] {
         background: rgba(239, 68, 68, 0.1) !important;
         border: 2px solid rgba(239, 68, 68, 0.5) !important;
         color: #ef4444 !important;
         font-weight: 700 !important;
-        font-size: 1.1rem !important;
-        padding: 0.4rem 0.6rem !important;
+        font-size: 1.2rem !important;
+        padding: 0 !important;
         min-height: 40px !important;
-        line-height: 1 !important;
+        max-height: 40px !important;
+        width: 100% !important;
+        display: flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        text-align: center !important;
+    }
+    
+    button[key*="delete_"] > div {
+        display: flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        width: 100% !important;
     }
     
     button[key*="delete_"]:hover {
@@ -239,20 +247,9 @@ def apply_custom_css():
         transform: scale(1.08) !important;
     }
     
-    /* Clear all button styling - changed from trash to sweep icon */
+    /* Remove clear all button */
     button[key="clear_all_btn"] {
-        background: rgba(239, 68, 68, 0.1) !important;
-        border: 2px solid rgba(239, 68, 68, 0.5) !important;
-        color: #ef4444 !important;
-        font-size: 1.1rem !important;
-        padding: 0.3rem !important;
-        font-weight: 700 !important;
-    }
-    
-    button[key="clear_all_btn"]:hover {
-        background: rgba(239, 68, 68, 0.2) !important;
-        border-color: #ef4444 !important;
-        transform: scale(1.1) !important;
+        display: none !important;
     }
     
     /* File uploader styling */
@@ -324,17 +321,19 @@ def apply_custom_css():
         border-left-color: #17a2b8;
     }
     
-    /* Expander styling */
+    /* Expander styling with uniform shadow */
     .streamlit-expanderHeader {
         border-radius: 8px;
-        background: #f8f9fa;
-        border: 1px solid #e9ecef;
+        background: rgba(128, 128, 128, 0.05);
+        border: 1px solid rgba(128, 128, 128, 0.2);
         transition: all 0.3s ease;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
     }
     
     .streamlit-expanderHeader:hover {
-        background: #e9ecef;
-        border-color: #dee2e6;
+        background: rgba(128, 128, 128, 0.1);
+        border-color: rgba(128, 128, 128, 0.3);
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
     }
     
     /* Progress bar styling */
@@ -355,9 +354,27 @@ def apply_custom_css():
         box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
     }
     
-    /* Sidebar styling */
+    /* Sidebar styling - dark mode compatible */
     section[data-testid="stSidebar"] {
-        background: linear-gradient(180deg, #f8f9fa 0%, #ffffff 100%);
+        background: transparent;
+        border-right: 1px solid rgba(128, 128, 128, 0.2);
+    }
+    
+    section[data-testid="stSidebar"] > div {
+        background: transparent;
+    }
+    
+    /* Sidebar content styling for better dark mode */
+    section[data-testid="stSidebar"] .stMarkdown,
+    section[data-testid="stSidebar"] .stButton {
+        color: inherit;
+    }
+    
+    /* Info boxes in sidebar - dark mode compatible */
+    section[data-testid="stSidebar"] .stAlert {
+        background: rgba(102, 126, 234, 0.1);
+        border-left-color: #667eea;
+        color: inherit;
     }
     
     /* Divider styling */
@@ -398,12 +415,13 @@ def apply_custom_css():
         font-size: 0.875rem;
     }
     
-    /* Chat message styling */
+    /* Chat message styling with uniform shadow */
     .stChatMessage {
         border-radius: 12px;
         padding: 1rem;
         margin-bottom: 0.75rem;
         animation: messageSlideIn 0.3s ease-out;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
     }
     
     @keyframes messageSlideIn {
@@ -414,6 +432,41 @@ def apply_custom_css():
         to {
             opacity: 1;
             transform: translateX(0);
+        }
+    }
+    
+    /* Bouncing balls loader animation */
+    .loading-dots {
+        display: inline-flex;
+        gap: 8px;
+        align-items: center;
+        padding: 20px;
+    }
+    
+    .loading-dots .dot {
+        width: 12px;
+        height: 12px;
+        border-radius: 50%;
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        animation: bounce 1.4s infinite ease-in-out both;
+    }
+    
+    .loading-dots .dot:nth-child(1) {
+        animation-delay: -0.32s;
+    }
+    
+    .loading-dots .dot:nth-child(2) {
+        animation-delay: -0.16s;
+    }
+    
+    @keyframes bounce {
+        0%, 80%, 100% {
+            transform: scale(0);
+            opacity: 0.5;
+        }
+        40% {
+            transform: scale(1);
+            opacity: 1;
         }
     }
     
@@ -436,9 +489,6 @@ def init_session_state():
     
     if 'selected_document' not in st.session_state:
         st.session_state.selected_document = None
-    
-    if 'confirm_clear' not in st.session_state:
-        st.session_state.confirm_clear = False
     
     if 'uploader_key' not in st.session_state:
         st.session_state.uploader_key = 0
@@ -549,18 +599,17 @@ def upload_files(files: List, api_client: RAGAPIClient):
     
     status_text.text(f"✨ Complete: {success_count}/{total_files} uploaded")
     
-    if success_count > 0:
-        # Auto-select the first uploaded document
-        if uploaded_doc_names and not st.session_state.selected_document:
-            st.session_state.selected_document = uploaded_doc_names[0]
-        
-        # Clear the file uploader by incrementing its key
-        if 'uploader_key' not in st.session_state:
-            st.session_state.uploader_key = 0
-        st.session_state.uploader_key += 1
-        
-        time.sleep(1.5)
-        st.rerun()
+    # Auto-select the first uploaded document if any succeeded
+    if success_count > 0 and uploaded_doc_names and not st.session_state.selected_document:
+        st.session_state.selected_document = uploaded_doc_names[0]
+    
+    # Clear the file uploader by incrementing its key (always, even on failure)
+    if 'uploader_key' not in st.session_state:
+        st.session_state.uploader_key = 0
+    st.session_state.uploader_key += 1
+    
+    time.sleep(1.5)
+    st.rerun()
 
 # ============================================================================
 # SIDEBAR
@@ -577,29 +626,8 @@ def render_sidebar(api_client: RAGAPIClient):
         
         st.markdown("---")
         
-        # Section header with Clear All button
-        col1, col2 = st.columns([3, 1])
-        with col1:
-            st.subheader("📖 Your Documents")
-        with col2:
-            if documents:
-                if st.button("🧹", key="clear_all_btn", help="Clear all documents", use_container_width=True):
-                    if st.session_state.get('confirm_clear', False):
-                        with st.spinner("Clearing..."):
-                            status_code, response = api_client.clear_all_documents()
-                        if status_code == 200:
-                            # Clear all chat histories
-                            st.session_state.document_chats = {}
-                            st.session_state.selected_document = None
-                            st.success("✅ Cleared!")
-                            st.session_state.confirm_clear = False
-                            time.sleep(0.5)
-                            st.rerun()
-                        else:
-                            st.error(f"❌ {response.get('message')}")
-                    else:
-                        st.session_state.confirm_clear = True
-                        st.warning("⚠️ Click again")
+        # Section header
+        st.subheader("📖 Your Documents")
         
         if documents:
             for doc in documents:
@@ -689,6 +717,13 @@ def handle_chat_input(prompt: str, api_client: RAGAPIClient, model: str):
     
     with st.chat_message("assistant"):
         message_placeholder = st.empty()
+        
+        # Show loading animation
+        message_placeholder.markdown(
+            '<div class="loading-dots"><div class="dot"></div><div class="dot"></div><div class="dot"></div></div>',
+            unsafe_allow_html=True
+        )
+        
         full_response = ""
         sources = []
         endpoint_type = None
