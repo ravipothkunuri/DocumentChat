@@ -3,7 +3,6 @@ import requests
 import json
 import time
 from typing import List, Dict, Any, Optional, Tuple
-from dataclasses import dataclass
 from datetime import datetime
 import os
 
@@ -14,44 +13,6 @@ import os
 API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8000")
 MAX_FILE_SIZE_MB = 20
 ALLOWED_EXTENSIONS = ['pdf', 'txt', 'docx']
-
-# ============================================================================
-# DATA MODELS
-# ============================================================================
-
-@dataclass
-class Document:
-    """Document model for better type handling"""
-    filename: str
-    type: str
-    size: int
-    chunks: int
-    uploaded_at: str
-    
-    @property
-    def size_formatted(self) -> str:
-        """Format size in human-readable format"""
-        size = self.size
-        for unit in ['B', 'KB', 'MB', 'GB']:
-            if size < 1024.0:
-                return f"{size:.1f} {unit}"
-            size /= 1024.0
-        return f"{size:.1f} TB"
-
-@dataclass
-class ChatMessage:
-    """Chat message model"""
-    role: str
-    content: str
-    sources: List[str] = None
-    timestamp: str = None
-    endpoint_type: str = None
-    
-    def __post_init__(self):
-        if self.timestamp is None:
-            self.timestamp = datetime.now().isoformat()
-        if self.sources is None:
-            self.sources = []
 
 # ============================================================================
 # API CLIENT
@@ -89,8 +50,10 @@ class RAGAPIClient:
         except requests.exceptions.RequestException:
             pass
         return {
-            "llm_models": ["phi3", "llama3", "mistral", "deepseek-r1"], 
-            "embedding_models": ["nomic-embed-text"],
+            "ollama": {
+                "llm_models": ["phi3", "llama3", "mistral", "deepseek-r1"],
+                "embedding_models": ["nomic-embed-text"]
+            },
             "current_config": {
                 "model": "phi3",
                 "embedding_model": "nomic-embed-text"
@@ -256,11 +219,6 @@ def apply_custom_css():
         box-shadow: 0 2px 4px rgba(0,0,0,0.1);
     }
     
-    /* Chat improvements */
-    .stChatMessage {
-        background-color: transparent;
-    }
-    
     /* Mobile responsive styles */
     @media screen and (max-width: 768px) {
         .main-header {
@@ -306,13 +264,6 @@ def apply_custom_css():
         
         div[data-testid="column"] {
             padding: 0 0.5rem !important;
-        }
-    }
-    
-    /* Touch-friendly sizing */
-    @media (hover: none) and (pointer: coarse) {
-        button, a, input, select {
-            min-height: 44px;
         }
     }
     
@@ -414,7 +365,7 @@ def settings_dialog(api_client: RAGAPIClient):
     models_data = api_client.get_models()
     health_status, health_data = api_client.health_check()
     
-    # Get current configuration from health endpoint
+    # Get current configuration
     current_config = {}
     if health_data:
         current_config = health_data.get('configuration', {})
@@ -427,10 +378,9 @@ def settings_dialog(api_client: RAGAPIClient):
         col1, col2 = st.columns(2)
         
         with col1:
-            ollama_models = models_data.get('ollama', [])
-            llm_models = ollama_models.get('llm_models', ['phi3', 'llama3', 'mistral', 'deepseek-r1'])
-            current_llm = current_config.get('model', 'phi3')                        
-            # Find index of current model
+            llm_models = models_data.get('ollama', {}).get('llm_models', ['phi3', 'llama3', 'mistral', 'deepseek-r1'])
+            current_llm = current_config.get('model', 'phi3')
+            
             try:
                 llm_index = llm_models.index(current_llm)
             except ValueError:
@@ -440,14 +390,13 @@ def settings_dialog(api_client: RAGAPIClient):
                 "LLM Model",
                 options=llm_models,
                 index=llm_index,
-                help="Model for generating answers. DeepSeek-R1 uses intelligent endpoint detection."
+                help="Model for generating answers"
             )
         
         with col2:
-            embedding_models = models_data.get('embedding_models', ['nomic-embed-text'])
+            embedding_models = models_data.get('ollama', {}).get('embedding_models', ['nomic-embed-text'])
             current_embedding = current_config.get('embedding_model', 'nomic-embed-text')
             
-            # Find index of current embedding model
             try:
                 embed_index = embedding_models.index(current_embedding)
             except ValueError:
@@ -536,13 +485,11 @@ def settings_dialog(api_client: RAGAPIClient):
             if changed_fields:
                 st.info(f"📝 Changed fields: {', '.join(changed_fields)}")
             
-            # Show warning if embedding model changed
             embedding_changed = 'embedding_model' in changed_fields
             if embedding_changed:
                 st.warning("⚠️ Embedding model changed! You should rebuild vectors for existing documents.")
             
-            # Auto-rebuild if requested or if embedding changed and user chose that option
-            if apply_and_rebuild or (embedding_changed and apply_and_rebuild):
+            if apply_and_rebuild:
                 with st.spinner("Rebuilding vectors... This may take a while."):
                     rebuild_status, rebuild_response = api_client.rebuild_vectors()
                     
@@ -576,21 +523,18 @@ def render_sidebar(api_client: RAGAPIClient):
     with st.sidebar:
         st.markdown('<h1 class="main-header">📚 RAG Assistant</h1>', unsafe_allow_html=True)
         
-        # Quick stats
         documents = api_client.get_documents()
         if documents:
             st.info(f"📊 {len(documents)} document(s) loaded")
         
         st.markdown("---")
         
-        # Document list
         st.subheader("📁 Your Documents")
         
         if documents:
             for doc in documents:
                 UIComponents.render_document_card(doc, api_client)
             
-            # Bulk actions
             st.markdown("---")
             col1, col2 = st.columns(2)
             
@@ -623,7 +567,6 @@ def render_sidebar(api_client: RAGAPIClient):
         else:
             st.info("💡 No documents yet. Upload below to get started!")
         
-        # File uploader
         st.markdown("---")
         st.subheader("📤 Upload Documents")
         
@@ -639,7 +582,6 @@ def render_sidebar(api_client: RAGAPIClient):
             if st.button("🚀 Process Files", type="primary", use_container_width=True):
                 upload_files(uploaded_files, api_client)
         
-        # Clear chat
         if st.session_state.get('chat_history') and st.session_state.chat_history:
             st.markdown("---")
             if st.button("💬 Clear Chat", use_container_width=True):
@@ -687,7 +629,6 @@ def render_chat_interface(api_client: RAGAPIClient, health_data: Dict):
         models_data = api_client.get_models()
         llm_models = models_data.get('ollama', {}).get('llm_models', ['phi3', 'llama3', 'mistral', 'deepseek-r1'])
     
-        # Show quick start guide
         with st.expander("📖 Quick Start Guide", expanded=True):
             st.markdown("""
             ### Getting Started
@@ -703,20 +644,10 @@ def render_chat_interface(api_client: RAGAPIClient, health_data: Dict):
             
             4. **Configure Settings** ⚙️  
                Click the settings button to customize models and parameters
-            
             """)
 
             if llm_models:
-                st.markdown(f"**Available LLM Models:** {', '.join(llm_models)}")   
-            else:
-                st.markdown("""
-                ### Supported Models
-
-                - **DeepSeek-R1**: Advanced reasoning model with automatic endpoint detection
-                - **Llama 3**: Fast and efficient general-purpose model
-                - **Phi-3**: Compact model optimized for quick responses
-                - **Mistral**: Balanced performance and quality
-            """)
+                st.markdown(f"**Available LLM Models:** {', '.join(llm_models)}")
         return
     
     # Initialize chat history
@@ -737,7 +668,6 @@ def render_chat_interface(api_client: RAGAPIClient, health_data: Dict):
                 st.markdown(message["content"])
                 
                 if message["role"] == "assistant":
-                    # Show endpoint info if available
                     if message.get("endpoint_type"):
                         endpoint_badge = f'<span class="status-badge status-info">Endpoint: {message["endpoint_type"]}</span>'
                         st.markdown(endpoint_badge, unsafe_allow_html=True)
@@ -822,7 +752,7 @@ def main():
         layout="wide",
         initial_sidebar_state="auto",
         menu_items={
-            'About': "# RAG Assistant\nChat with your documents using AI with intelligent endpoint detection"
+            'About': "# RAG Assistant\nChat with your documents using AI"
         }
     )
     
