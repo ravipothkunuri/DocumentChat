@@ -116,6 +116,7 @@ def apply_custom_css():
     """Apply custom CSS for better UI"""
     st.markdown("""
     <style>
+    /* Main header styling */
     .main-header {
         font-size: 2.5rem;
         font-weight: 700;
@@ -124,8 +125,10 @@ def apply_custom_css():
         -webkit-text-fill-color: transparent;
         text-align: center;
         margin-bottom: 1rem;
+        padding: 0.5rem 0;
     }
     
+    /* Status badges */
     .status-badge {
         display: inline-block;
         padding: 0.25rem 0.75rem;
@@ -138,40 +141,276 @@ def apply_custom_css():
     .status-error { background-color: #f8d7da; color: #721c24; }
     .status-info { background-color: #d1ecf1; color: #0c5460; }
     
+    /* Enhanced button styling */
+    .stButton > button {
+        transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        border-radius: 8px;
+        font-weight: 500;
+        border: 2px solid transparent;
+    }
+    
+    .stButton > button:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+    }
+    
+    .stButton > button:active {
+        transform: translateY(0);
+        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+    }
+    
+    /* Primary button enhancement */
+    .stButton > button[kind="primary"] {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        border: none;
+    }
+    
+    .stButton > button[kind="primary"]:hover {
+        background: linear-gradient(135deg, #764ba2 0%, #667eea 100%);
+        box-shadow: 0 6px 20px rgba(102, 126, 234, 0.4);
+    }
+    
+    /* Secondary button enhancement */
+    .stButton > button[kind="secondary"] {
+        background: #f8f9fa;
+        border: 2px solid #e9ecef;
+        color: #495057;
+    }
+    
+    .stButton > button[kind="secondary"]:hover {
+        background: #e9ecef;
+        border-color: #dee2e6;
+    }
+    
+    /* Document card styling */
     .doc-card {
         padding: 1rem;
-        border-radius: 0.5rem;
-        margin-bottom: 0.5rem;
-        border: 2px solid transparent;
-        transition: all 0.3s ease;
+        border-radius: 12px;
+        margin-bottom: 0.75rem;
+        border: 2px solid #e9ecef;
+        background: #ffffff;
+        transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
     }
     
     .doc-card:hover {
         background-color: #f8f9fa;
-        cursor: pointer;
+        border-color: #dee2e6;
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+        transform: translateY(-2px);
     }
     
     .doc-card-selected {
-        background-color: #d4edda;
-        border: 2px solid #28a745;
-        box-shadow: 0 2px 4px rgba(40, 167, 69, 0.2);
+        background: linear-gradient(135deg, #e8f5e9 0%, #c8e6c9 100%);
+        border: 2px solid #4caf50;
+        box-shadow: 0 4px 16px rgba(76, 175, 80, 0.25);
+        transform: translateY(-2px);
     }
     
-    .section-header {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        margin-bottom: 1rem;
+    .doc-card-selected:hover {
+        background: linear-gradient(135deg, #c8e6c9 0%, #a5d6a7 100%);
+        box-shadow: 0 6px 20px rgba(76, 175, 80, 0.3);
     }
     
+    /* Delete button styling */
+    div[data-testid="column"]:last-child .stButton > button {
+        background: #fff5f5;
+        border: 2px solid #feb2b2;
+        color: #c53030;
+        font-weight: 600;
+        padding: 0.25rem 0.5rem;
+        min-height: 38px;
+    }
+    
+    div[data-testid="column"]:last-child .stButton > button:hover {
+        background: #fed7d7;
+        border-color: #fc8181;
+        color: #9b2c2c;
+        transform: scale(1.05);
+    }
+    
+    /* Clear all button styling */
+    button[key="clear_all_btn"] {
+        background: #fff5f5 !important;
+        border: 2px solid #feb2b2 !important;
+        color: #c53030 !important;
+        font-size: 1.2rem !important;
+        padding: 0.25rem !important;
+    }
+    
+    button[key="clear_all_btn"]:hover {
+        background: #fed7d7 !important;
+        border-color: #fc8181 !important;
+        transform: rotate(15deg) scale(1.1) !important;
+    }
+    
+    /* File uploader styling */
+    .stFileUploader {
+        border: 2px dashed #cbd5e0;
+        border-radius: 12px;
+        padding: 1.5rem;
+        background: #f7fafc;
+        transition: all 0.3s ease;
+    }
+    
+    .stFileUploader:hover {
+        border-color: #667eea;
+        background: #edf2f7;
+    }
+    
+    /* Chat input styling */
+    .stChatInput > div {
+        border-radius: 12px;
+        border: 2px solid #e9ecef;
+        transition: all 0.3s ease;
+    }
+    
+    .stChatInput > div:focus-within {
+        border-color: #667eea;
+        box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+    }
+    
+    /* Info/Warning/Success boxes */
+    .stAlert {
+        border-radius: 12px;
+        border-left: 4px solid;
+        padding: 1rem 1.25rem;
+        animation: slideIn 0.3s ease-out;
+    }
+    
+    @keyframes slideIn {
+        from {
+            opacity: 0;
+            transform: translateY(-10px);
+        }
+        to {
+            opacity: 1;
+            transform: translateY(0);
+        }
+    }
+    
+    /* Success message enhancement */
+    .stSuccess {
+        background: linear-gradient(135deg, #d4edda 0%, #c3e6cb 100%);
+        border-left-color: #28a745;
+    }
+    
+    /* Error message enhancement */
+    .stError {
+        background: linear-gradient(135deg, #f8d7da 0%, #f5c6cb 100%);
+        border-left-color: #dc3545;
+    }
+    
+    /* Warning message enhancement */
+    .stWarning {
+        background: linear-gradient(135deg, #fff3cd 0%, #ffe69c 100%);
+        border-left-color: #ffc107;
+    }
+    
+    /* Info message enhancement */
+    .stInfo {
+        background: linear-gradient(135deg, #d1ecf1 0%, #bee5eb 100%);
+        border-left-color: #17a2b8;
+    }
+    
+    /* Expander styling */
+    .streamlit-expanderHeader {
+        border-radius: 8px;
+        background: #f8f9fa;
+        border: 1px solid #e9ecef;
+        transition: all 0.3s ease;
+    }
+    
+    .streamlit-expanderHeader:hover {
+        background: #e9ecef;
+        border-color: #dee2e6;
+    }
+    
+    /* Progress bar styling */
+    .stProgress > div > div {
+        background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
+        border-radius: 10px;
+    }
+    
+    /* Select box styling */
+    .stSelectbox > div > div {
+        border-radius: 8px;
+        border: 2px solid #e9ecef;
+        transition: all 0.3s ease;
+    }
+    
+    .stSelectbox > div > div:focus-within {
+        border-color: #667eea;
+        box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+    }
+    
+    /* Sidebar styling */
+    section[data-testid="stSidebar"] {
+        background: linear-gradient(180deg, #f8f9fa 0%, #ffffff 100%);
+    }
+    
+    /* Divider styling */
+    hr {
+        margin: 1.5rem 0;
+        border: none;
+        height: 2px;
+        background: linear-gradient(90deg, transparent 0%, #e9ecef 50%, transparent 100%);
+    }
+    
+    /* Responsive design */
     @media screen and (max-width: 768px) {
-        .main-header { font-size: 1.8rem; }
-        .stButton button { width: 100% !important; min-height: 44px !important; }
-        div[data-testid="metric-container"] { min-width: 100% !important; }
+        .main-header { 
+            font-size: 1.8rem; 
+        }
+        
+        .stButton button { 
+            width: 100% !important; 
+            min-height: 44px !important; 
+        }
+        
+        div[data-testid="metric-container"] { 
+            min-width: 100% !important; 
+        }
+        
+        .doc-card {
+            padding: 0.75rem;
+        }
     }
     
+    /* Hide Streamlit branding */
     #MainMenu {visibility: hidden;}
     footer {visibility: hidden;}
+    
+    /* Caption styling */
+    .stCaption {
+        color: #6c757d;
+        font-size: 0.875rem;
+    }
+    
+    /* Chat message styling */
+    .stChatMessage {
+        border-radius: 12px;
+        padding: 1rem;
+        margin-bottom: 0.75rem;
+        animation: messageSlideIn 0.3s ease-out;
+    }
+    
+    @keyframes messageSlideIn {
+        from {
+            opacity: 0;
+            transform: translateX(-20px);
+        }
+        to {
+            opacity: 1;
+            transform: translateX(0);
+        }
+    }
+    
+    /* Subheader styling */
+    .stSubheader {
+        color: #2d3748;
+        font-weight: 600;
+    }
     </style>
     """, unsafe_allow_html=True)
 
