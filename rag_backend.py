@@ -87,9 +87,16 @@ class DocumentInfo(BaseModel):
     type: str
 
 
-# Ollama LLM with automatic endpoint detection
+# Ollama LLM with automatic endpoint detection via model inspection
 class OllamaLLM:
-    """Universal Ollama LLM client with automatic endpoint detection."""
+    """Universal Ollama LLM client with automatic endpoint detection via model inspection."""
+    
+    # Known chat-capable model patterns
+    CHAT_MODEL_PATTERNS = [
+        'llama3', 'llama-3', 'gemma', 'qwen', 'mistral', 'mixtral',
+        'phi3', 'phi-3', 'command', 'deepseek', 'llava', 'openchat',
+        'solar', 'yi', 'nous', 'dolphin', 'orca', 'vicuna', 'wizardlm'
+    ]
     
     def __init__(
         self, 
@@ -106,38 +113,135 @@ class OllamaLLM:
         self.base_url = base_url.rstrip('/')
         self.endpoint_type = None
         self.model_loaded = False
+        self.model_info = None
         logger.info(f"Initializing OllamaLLM with model: {model}")
     
+    def _get_model_info(self) -> Dict[str, Any]:
+        """Fetch model information from Ollama's show API."""
+        if self.model_info is not None:
+            return self.model_info
+        
+        try:
+            show_url = f"{self.base_url}/api/show"
+            payload = {"name": self.model}
+            
+            logger.debug(f"Fetching model info for: {self.model}")
+            response = requests.post(show_url, json=payload, timeout=10)
+            
+            if response.status_code == 200:
+                self.model_info = response.json()
+                logger.debug(f"Model info retrieved successfully for {self.model}")
+                return self.model_info
+            elif response.status_code == 404:
+                logger.warning(f"Model '{self.model}' not found in Ollama")
+                return {}
+            else:
+                logger.warning(f"Unexpected status {response.status_code} from show API")
+                return {}
+        except requests.exceptions.Timeout:
+            logger.warning(f"Timeout fetching model info for {self.model}")
+            return {}
+        except Exception as e:
+            logger.debug(f"Error fetching model info: {e}")
+            return {}
+    
+    def _detect_endpoint_from_model_info(self) -> Optional[str]:
+        """Detect endpoint type from model information."""
+        model_info = self._get_model_info()
+        
+        if not model_info:
+            return None
+        
+        # Check template for chat indicators
+        template = model_info.get('template', '').lower()
+        modelfile = model_info.get('modelfile', '').lower()
+        
+        # Strong indicators for chat endpoint
+        chat_indicators = [
+            '{{.system}}', '{{.prompt}}', '<|im_start|>', '<|start_header_id|>',
+            '[inst]', '<|user|>', '<|assistant|>', 'chatml', 'chat_template'
+        ]
+        
+        # Check template
+        if any(indicator in template for indicator in chat_indicators):
+            logger.info(f"Model {self.model} supports chat (template indicators found)")
+            return "chat"
+        
+        # Check modelfile for chat-related configurations
+        if 'chat' in modelfile or any(indicator in modelfile for indicator in chat_indicators):
+            logger.info(f"Model {self.model} supports chat (modelfile indicators found)")
+            return "chat"
+        
+        # Check model parameters
+        parameters = model_info.get('parameters', '')
+        if 'chat' in parameters.lower():
+            logger.info(f"Model {self.model} supports chat (parameter indicators found)")
+            return "chat"
+        
+        return None
+    
+    def _detect_endpoint_from_name(self) -> str:
+        """Fallback: detect endpoint from model name patterns."""
+        model_lower = self.model.lower()
+        
+        # Check against known chat model patterns
+        for pattern in self.CHAT_MODEL_PATTERNS:
+            if pattern in model_lower:
+                logger.info(f"Model {self.model} likely supports chat (name pattern match)")
+                return "chat"
+        
+        # Default to generate for unknown models
+        logger.info(f"Model {self.model} defaulting to generate endpoint")
+        return "generate"
+    
     def _detect_endpoint(self) -> None:
-        """Detect which endpoint the model supports."""
+        """Detect which endpoint the model supports using model inspection."""
         if self.endpoint_type is not None:
             return
         
         logger.debug(f"Detecting endpoint for model: {self.model}")
         
-        # Try chat endpoint first
+        # Step 1: Try model inspection API
+        detected_type = self._detect_endpoint_from_model_info()
+        
+        # Step 2: Fallback to name-based detection
+        if detected_type is None:
+            detected_type = self._detect_endpoint_from_name()
+        
+        self.endpoint_type = detected_type
+        logger.info(f"Model {self.model} will use /api/{self.endpoint_type} endpoint")
+    
+    def _verify_endpoint_with_minimal_call(self) -> None:
+        """Verify endpoint works with a minimal test call (only on first use)."""
+        if self.model_loaded:
+            return
+        
         try:
-            chat_url = f"{self.base_url}/api/chat"
-            test_payload = {
-                "model": self.model,
-                "messages": [{"role": "user", "content": "hi"}],
-                "stream": False
-            }
+            url, payload = self._build_payload("test", stream=False)
             
-            detection_timeout = self.cold_start_timeout if not self.model_loaded else 10
-            logger.info(f"Testing /api/chat endpoint with timeout {detection_timeout}s")
-            response = requests.post(chat_url, json=test_payload, timeout=detection_timeout)
+            # Make a minimal test call with very short response
+            if self.endpoint_type == "chat":
+                payload["messages"] = [{"role": "user", "content": "Hi"}]
+                payload["options"] = {"num_predict": 1}  # Only generate 1 token
+            else:
+                payload["prompt"] = "Hi"
+                payload["options"] = {"num_predict": 1}
+            
+            logger.debug(f"Verifying {self.endpoint_type} endpoint with minimal call")
+            response = requests.post(url, json=payload, timeout=15)
             
             if response.status_code == 200:
-                self.endpoint_type = "chat"
-                logger.info(f"Model {self.model} uses /api/chat endpoint")
-                return
+                self.model_loaded = True
+                logger.info(f"Endpoint verification successful for {self.model}")
+            elif response.status_code == 404 and self.endpoint_type == "chat":
+                # Fallback to generate if chat fails
+                logger.warning(f"Chat endpoint failed, switching to generate for {self.model}")
+                self.endpoint_type = "generate"
+                self.model_loaded = False  # Retry with generate
+            else:
+                logger.warning(f"Endpoint verification returned status {response.status_code}")
         except Exception as e:
-            logger.debug(f"Chat endpoint test failed: {e}")
-        
-        # Default to generate endpoint
-        self.endpoint_type = "generate"
-        logger.info(f"Model {self.model} uses /api/generate endpoint")
+            logger.debug(f"Endpoint verification failed (will retry on actual use): {e}")
     
     def _build_payload(self, prompt: str, stream: bool) -> tuple[str, dict]:
         """Build request payload based on endpoint type."""
@@ -179,11 +283,23 @@ class OllamaLLM:
     def invoke(self, prompt: str) -> str:
         """Invoke the model with a prompt."""
         try:
+            # Verify endpoint on first call (if not already done)
+            if not self.model_loaded:
+                self._verify_endpoint_with_minimal_call()
+            
             url, payload = self._build_payload(prompt, stream=False)
             current_timeout = self._get_time_out()
             logger.info(f"Invoking model {self.model} with timeout {current_timeout}s")
 
             response = requests.post(url, json=payload, timeout=current_timeout)
+            
+            # Handle endpoint mismatch
+            if response.status_code == 404 and self.endpoint_type == "chat":
+                logger.warning(f"Chat endpoint failed, retrying with generate endpoint")
+                self.endpoint_type = "generate"
+                url, payload = self._build_payload(prompt, stream=False)
+                response = requests.post(url, json=payload, timeout=current_timeout)
+            
             response.raise_for_status()
             self.model_loaded = True
             return self._extract_content(response.json())
@@ -193,19 +309,33 @@ class OllamaLLM:
                 raise ValueError(f"Model '{self.model}' not found. Pull it using: ollama pull {self.model}")
             raise ValueError(f"Model error: {str(e)}")
         except requests.exceptions.Timeout:
-            raise ValueError(f"Request timed out after {self.timeout}s")
+            raise ValueError(f"Request timed out after {current_timeout}s")
         except Exception as e:
             raise ValueError(f"Failed to communicate with model: {str(e)}")
     
     def stream(self, prompt: str) -> Iterator[str]:
         """Stream the model's response."""
         try:
+            # Verify endpoint on first call (if not already done)
+            if not self.model_loaded:
+                self._verify_endpoint_with_minimal_call()
+            
             url, payload = self._build_payload(prompt, stream=True)
             current_timeout = self._get_time_out()
             logger.info(f"Streaming from model {self.model} with timeout {current_timeout}s")
+            
             response = requests.post(url, json=payload, timeout=current_timeout, stream=True)
+            
+            # Handle endpoint mismatch
+            if response.status_code == 404 and self.endpoint_type == "chat":
+                logger.warning(f"Chat endpoint failed, retrying with generate endpoint")
+                self.endpoint_type = "generate"
+                url, payload = self._build_payload(prompt, stream=True)
+                response = requests.post(url, json=payload, timeout=current_timeout, stream=True)
+            
             response.raise_for_status()
             first_chunk = True
+            
             for line in response.iter_lines():
                 if line:
                     try:
@@ -226,9 +356,9 @@ class OllamaLLM:
                         continue
         except requests.exceptions.Timeout:
             error_msg = (
-                f"Streaming request timed out after {self.timeout}s."
+                f"Streaming request timed out after {current_timeout}s."
                 f" Large models like {self.model} may require more time to start."
-                 f" Please try again. Subsequent requests should be faster."
+                f" Please try again. Subsequent requests should be faster."
             )
             logger.error(error_msg)
             raise ValueError(error_msg)
