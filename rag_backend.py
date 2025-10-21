@@ -3,6 +3,7 @@ import json
 import logging
 import traceback
 import re
+from langsmith import expect
 import requests
 from datetime import datetime
 from pathlib import Path
@@ -95,13 +96,16 @@ class OllamaLLM:
         model: str, 
         base_url: str = OLLAMA_BASE_URL,
         temperature: float = 0.7,
-        timeout: int = 120
+        timeout: int = 120,
+        cold_start_timeout: int = 600
     ):
         self.model = model
         self.temperature = temperature
         self.timeout = timeout
+        self.cold_start_timeout = cold_start_timeout
         self.base_url = base_url.rstrip('/')
         self.endpoint_type = None
+        self.model_loaded = False
         logger.info(f"Initializing OllamaLLM with model: {model}")
     
     def _detect_endpoint(self) -> None:
@@ -120,7 +124,9 @@ class OllamaLLM:
                 "stream": False
             }
             
-            response = requests.post(chat_url, json=test_payload, timeout=10)
+            detection_timeout = self.cold_start_timeout if not self.model_loaded else 10
+            logger.info(f"Testing /api/chat endpoint with timeout {detection_timeout}s")
+            response = requests.post(chat_url, json=test_payload, timeout=detection_timeout)
             
             if response.status_code == 200:
                 self.endpoint_type = "chat"
@@ -163,14 +169,23 @@ class OllamaLLM:
         if self.endpoint_type == "chat":
             return data.get("message", {}).get("content", "")
         return data.get("response", "")
-    
+
+    def _get_time_out(self, is_first_call: bool = False) -> int:
+        """Get the timeout value."""
+        if is_first_call or not self.model_loaded:
+            return self.cold_start_timeout
+        return self.timeout
+
     def invoke(self, prompt: str) -> str:
         """Invoke the model with a prompt."""
         try:
             url, payload = self._build_payload(prompt, stream=False)
-            response = requests.post(url, json=payload, timeout=self.timeout)
+            current_timeout = self._get_time_out()
+            logger.info(f"Invoking model {self.model} with timeout {current_timeout}s")
+
+            response = requests.post(url, json=payload, timeout=current_timeout)
             response.raise_for_status()
-            
+            self.model_loaded = True
             return self._extract_content(response.json())
         
         except requests.exceptions.HTTPError as e:
@@ -186,15 +201,22 @@ class OllamaLLM:
         """Stream the model's response."""
         try:
             url, payload = self._build_payload(prompt, stream=True)
-            response = requests.post(url, json=payload, timeout=self.timeout, stream=True)
+            current_timeout = self._get_time_out()
+            logger.info(f"Streaming from model {self.model} with timeout {current_timeout}s")
+            response = requests.post(url, json=payload, timeout=current_timeout, stream=True)
             response.raise_for_status()
-            
+            first_chunk = True
             for line in response.iter_lines():
                 if line:
                     try:
                         data = json.loads(line)
                         content = self._extract_content(data)
                         
+                        if first_chunk and content:
+                            self.model_loaded = True
+                            logger.info(f"Model {self.model} loaded successfully on first stream chunk")
+                            first_chunk = False
+
                         if content:
                             yield content
                         
@@ -202,7 +224,14 @@ class OllamaLLM:
                             break
                     except json.JSONDecodeError:
                         continue
-        
+        except requests.exceptions.Timeout:
+            error_msg = (
+                f"Streaming request timed out after {self.timeout}s."
+                f" Large models like {self.model} may require more time to start."
+                 f" Please try again. Subsequent requests should be faster."
+            )
+            logger.error(error_msg)
+            raise ValueError(error_msg)
         except requests.exceptions.HTTPError as e:
             if e.response.status_code == 404:
                 raise ValueError(f"Model '{self.model}' not found. Pull it using: ollama pull {self.model}")
@@ -221,6 +250,8 @@ class ConfigManager:
         'chunk_size': 1000,
         'chunk_overlap': 200,
         'temperature': 0.7,
+        'time_out': 120,
+        'cold_start_timeout': 600,
         'total_queries': 0
     }
     
@@ -378,7 +409,9 @@ class ModelManager:
                 llm = OllamaLLM(
                     model=model_to_use,
                     base_url=OLLAMA_BASE_URL,
-                    temperature=temperature or self.config.get('temperature')
+                    temperature=temperature or self.config.get('temperature'),
+                    timeout=self.config.get('time_out', 120),
+                    cold_start_timeout=self.config.get('cold_start_timeout', 600)
                 )
                 self.llm_cache[model_to_use] = llm
                 logger.info(f"LLM model '{model_to_use}' cached successfully")
