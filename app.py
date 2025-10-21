@@ -138,6 +138,13 @@ def apply_custom_css():
     .status-error { background-color: #f8d7da; color: #721c24; }
     .status-info { background-color: #d1ecf1; color: #0c5460; }
     
+    .doc-selector {
+        background-color: #f8f9fa;
+        padding: 0.5rem;
+        border-radius: 0.5rem;
+        margin-bottom: 1rem;
+    }
+    
     @media screen and (max-width: 768px) {
         .main-header { font-size: 1.8rem; }
         .stButton button { width: 100% !important; min-height: 44px !important; }
@@ -150,12 +157,55 @@ def apply_custom_css():
     """, unsafe_allow_html=True)
 
 # ============================================================================
+# SESSION STATE INITIALIZATION
+# ============================================================================
+
+def init_session_state():
+    """Initialize session state variables"""
+    if 'document_chats' not in st.session_state:
+        st.session_state.document_chats = {}
+    
+    if 'selected_document' not in st.session_state:
+        st.session_state.selected_document = None
+    
+    if 'confirm_clear' not in st.session_state:
+        st.session_state.confirm_clear = False
+
+def get_current_chat_history() -> List[Dict]:
+    """Get chat history for currently selected document"""
+    if st.session_state.selected_document:
+        doc_name = st.session_state.selected_document
+        if doc_name not in st.session_state.document_chats:
+            st.session_state.document_chats[doc_name] = []
+        return st.session_state.document_chats[doc_name]
+    return []
+
+def add_message_to_current_chat(message: Dict):
+    """Add message to current document's chat history"""
+    if st.session_state.selected_document:
+        doc_name = st.session_state.selected_document
+        if doc_name not in st.session_state.document_chats:
+            st.session_state.document_chats[doc_name] = []
+        st.session_state.document_chats[doc_name].append(message)
+
+def clear_current_chat():
+    """Clear chat history for current document"""
+    if st.session_state.selected_document:
+        doc_name = st.session_state.selected_document
+        st.session_state.document_chats[doc_name] = []
+
+# ============================================================================
 # UI COMPONENTS
 # ============================================================================
 
 def render_document_card(doc: Dict, api_client: RAGAPIClient):
     """Render a document card with actions"""
-    with st.expander(f"📄 {doc['filename']}", expanded=False):
+    doc_name = doc['filename']
+    is_selected = st.session_state.selected_document == doc_name
+    
+    expander_label = f"{'📘' if is_selected else '📄'} {doc_name}"
+    
+    with st.expander(expander_label, expanded=False):
         col1, col2 = st.columns([3, 1])
         
         with col1:
@@ -163,12 +213,36 @@ def render_document_card(doc: Dict, api_client: RAGAPIClient):
             st.caption(f"**Size:** {doc['size']:,} bytes")
             st.caption(f"**Chunks:** {doc['chunks']}")
             st.caption(f"**Uploaded:** {doc['uploaded_at'][:19]}")
+            
+            # Show message count if chat exists
+            if doc_name in st.session_state.document_chats:
+                msg_count = len(st.session_state.document_chats[doc_name])
+                if msg_count > 0:
+                    st.caption(f"**Messages:** {msg_count}")
         
         with col2:
-            if st.button("🗑️", key=f"delete_{doc['filename']}", 
+            # Select button
+            if st.button("💬" if not is_selected else "✓", 
+                        key=f"select_{doc_name}", 
+                        help="Chat with this document",
+                        use_container_width=True,
+                        type="primary" if is_selected else "secondary"):
+                st.session_state.selected_document = doc_name
+                st.rerun()
+            
+            # Delete button
+            if st.button("🗑️", key=f"delete_{doc_name}", 
                        help="Delete document", use_container_width=True):
-                status_code, response = api_client.delete_document(doc['filename'])
+                status_code, response = api_client.delete_document(doc_name)
                 if status_code == 200:
+                    # Clean up chat history for deleted document
+                    if doc_name in st.session_state.document_chats:
+                        del st.session_state.document_chats[doc_name]
+                    
+                    # Clear selection if this was the selected document
+                    if st.session_state.selected_document == doc_name:
+                        st.session_state.selected_document = None
+                    
                     st.success(f"✅ Deleted")
                     time.sleep(0.5)
                     st.rerun()
@@ -180,6 +254,7 @@ def upload_files(files: List, api_client: RAGAPIClient):
     """Handle file upload with progress tracking"""
     success_count = 0
     total_files = len(files)
+    uploaded_doc_names = []
     
     progress_bar = st.progress(0)
     status_text = st.empty()
@@ -192,6 +267,7 @@ def upload_files(files: List, api_client: RAGAPIClient):
         if status_code == 200:
             st.success(f"✅ {file.name}: {response.get('chunks', 0)} chunks created")
             success_count += 1
+            uploaded_doc_names.append(file.name)
         else:
             st.error(f"❌ {file.name}: {response.get('message', 'Failed')}")
         
@@ -200,10 +276,11 @@ def upload_files(files: List, api_client: RAGAPIClient):
     status_text.text(f"✨ Complete: {success_count}/{total_files} uploaded")
     
     if success_count > 0:
+        # Auto-select the first uploaded document
+        if uploaded_doc_names and not st.session_state.selected_document:
+            st.session_state.selected_document = uploaded_doc_names[0]
+        
         time.sleep(1.5)
-        # Clear the uploaded files from session state
-        if 'uploaded_files' in st.session_state:
-            del st.session_state.uploaded_files
         st.rerun()
 
 # ============================================================================
@@ -232,6 +309,9 @@ def render_sidebar(api_client: RAGAPIClient):
                     with st.spinner("Clearing..."):
                         status_code, response = api_client.clear_all_documents()
                     if status_code == 200:
+                        # Clear all chat histories
+                        st.session_state.document_chats = {}
+                        st.session_state.selected_document = None
                         st.success("✅ Cleared!")
                         st.session_state.confirm_clear = False
                         time.sleep(0.5)
@@ -247,28 +327,25 @@ def render_sidebar(api_client: RAGAPIClient):
         st.markdown("---")
         st.subheader("📤 Upload Documents")
         
-        # Only show file uploader if files haven't been processed
-        if 'uploaded_files' not in st.session_state:
-            uploaded_files = st.file_uploader(
-                "Choose files",
-                type=ALLOWED_EXTENSIONS,
-                accept_multiple_files=True,
-                help=f"Supported: {', '.join(ALLOWED_EXTENSIONS).upper()} (max {MAX_FILE_SIZE_MB}MB each)",
-                key="file_uploader"
-            )
-            
-            if uploaded_files:
-                st.session_state.uploaded_files = uploaded_files
+        # Always show file uploader - this fixes the UI issue
+        uploaded_files = st.file_uploader(
+            "Choose files",
+            type=ALLOWED_EXTENSIONS,
+            accept_multiple_files=True,
+            help=f"Supported: {', '.join(ALLOWED_EXTENSIONS).upper()} (max {MAX_FILE_SIZE_MB}MB each)",
+            key="file_uploader"
+        )
         
-        # Show process button if files are selected
-        if st.session_state.get('uploaded_files'):
+        # Show process button only when files are selected
+        if uploaded_files:
             if st.button("🚀 Process Files", type="primary", use_container_width=True):
-                upload_files(st.session_state.uploaded_files, api_client)
+                upload_files(uploaded_files, api_client)
         
-        if st.session_state.get('chat_history') and st.session_state.chat_history:
+        # Clear chat button for selected document
+        if st.session_state.selected_document and get_current_chat_history():
             st.markdown("---")
-            if st.button("💬 Clear Chat", use_container_width=True):
-                st.session_state.chat_history = []
+            if st.button("💬 Clear Current Chat", use_container_width=True):
+                clear_current_chat()
                 st.rerun()
 
 # ============================================================================
@@ -286,24 +363,29 @@ def render_chat_interface(api_client: RAGAPIClient, health_data: Dict, selected_
             ### Getting Started
             
             1. **Upload Documents** 📤 - Click the sidebar and upload PDF, TXT, or DOCX files
-            2. **Ask Questions** 💬 - Type your question in the chat input below
-            3. **Get Answers** 🎯 - Receive AI-powered answers with source citations
-            4. **Select Model** 🤖 - Choose your preferred LLM model from the dropdown above
+            2. **Select Document** 💬 - Click the chat icon on any document to select it
+            3. **Ask Questions** 💭 - Type your question in the chat input below
+            4. **Get Answers** 🎯 - Receive AI-powered answers with source citations
+            5. **Switch Documents** 🔄 - Each document has its own independent chat history
             """)
         return
     
-    if 'chat_history' not in st.session_state:
-        st.session_state.chat_history = []
+    if not st.session_state.selected_document:
+        st.warning("📄 **Please select a document** from the sidebar to start chatting.")
+        return
     
     ollama_status = health_data.get('ollama_status', {}) if health_data else {}
     if ollama_status.get('available'):
-        st.success("✔ Ollama Connected")
+        st.success(f"✓ Ollama Connected | 📘 Chatting with: **{st.session_state.selected_document}**")
     else:
         st.error("✗ Ollama Unavailable")
-
+    
+    # Get chat history for current document
+    chat_history = get_current_chat_history()
+    
     chat_container = st.container()
     with chat_container:
-        for message in st.session_state.chat_history:
+        for message in chat_history:
             with st.chat_message(message["role"]):
                 st.markdown(message["content"])
                 
@@ -311,17 +393,18 @@ def render_chat_interface(api_client: RAGAPIClient, health_data: Dict, selected_
                     endpoint_badge = f'<span class="status-badge status-info">Endpoint: {message["endpoint_type"]}</span>'
                     st.markdown(endpoint_badge, unsafe_allow_html=True)
     
-    if prompt := st.chat_input("💭 Ask your documents anything..."):
+    if prompt := st.chat_input(f"💭 Ask about {st.session_state.selected_document}..."):
         handle_chat_input(prompt, api_client, selected_model)
 
 
 def handle_chat_input(prompt: str, api_client: RAGAPIClient, model: str):
     """Handle user chat input"""
-    st.session_state.chat_history.append({
+    message = {
         "role": "user",
         "content": prompt,
         "timestamp": datetime.now().isoformat()
-    })
+    }
+    add_message_to_current_chat(message)
     
     with st.chat_message("user"):
         st.markdown(prompt)
@@ -347,13 +430,14 @@ def handle_chat_input(prompt: str, api_client: RAGAPIClient, model: str):
                     message_placeholder.error(error_msg)
                     full_response = error_msg
             
-            st.session_state.chat_history.append({
+            assistant_message = {
                 "role": "assistant",
                 "content": full_response,
                 "sources": sources,
                 "endpoint_type": endpoint_type,
                 "timestamp": datetime.now().isoformat()
-            })
+            }
+            add_message_to_current_chat(assistant_message)
             
             if endpoint_type:
                 endpoint_badge = f'<span class="status-badge status-info">Endpoint: {endpoint_type}</span>'
@@ -362,12 +446,13 @@ def handle_chat_input(prompt: str, api_client: RAGAPIClient, model: str):
         except Exception as e:
             error_msg = f"❌ Error: {str(e)}"
             message_placeholder.error(error_msg)
-            st.session_state.chat_history.append({
+            error_message = {
                 "role": "assistant",
                 "content": error_msg,
                 "sources": [],
                 "timestamp": datetime.now().isoformat()
-            })
+            }
+            add_message_to_current_chat(error_message)
 
 # ============================================================================
 # MAIN APPLICATION
@@ -385,6 +470,7 @@ def main():
     )
     
     apply_custom_css()
+    init_session_state()
     api_client = RAGAPIClient(API_BASE_URL)
     
     health_status, health_data = api_client.health_check()
