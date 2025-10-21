@@ -61,11 +61,6 @@ class RAGAPIClient:
         status_code, data = self._request('GET', '/documents')
         return data if status_code == 200 else []
     
-    def get_stats(self) -> Dict:
-        """Get system statistics"""
-        status_code, data = self._request('GET', '/stats')
-        return data if status_code == 200 else {}
-    
     def upload_file(self, file) -> Tuple[int, Dict]:
         """Upload a file to the backend"""
         try:
@@ -87,19 +82,13 @@ class RAGAPIClient:
         """Update system configuration"""
         return self._request('POST', '/configure', json=config, timeout=30)
     
-    def rebuild_vectors(self) -> Tuple[int, Dict]:
-        """Rebuild vector store"""
-        return self._request('POST', '/rebuild-vectors', timeout=120)
-    
-    def query_stream(self, question: str, top_k: int = 4, model: str = None, temperature: float = None):
+    def query_stream(self, question: str, top_k: int = 4, model: str = None):
         """Stream query response"""
         try:
             payload = {"question": question, "stream": True, "top_k": top_k}
             
             if model:
                 payload["model"] = model
-            if temperature is not None:
-                payload["temperature"] = temperature
             
             response = self.session.post(
                 f"{self.base_url}/query",
@@ -187,36 +176,6 @@ def render_document_card(doc: Dict, api_client: RAGAPIClient):
                     st.error(f"❌ {response.get('message', 'Failed')}")
 
 
-def render_metrics_dashboard(health_data: Dict, stats_data: Dict):
-    """Render system metrics dashboard"""
-    if not health_data:
-        return
-    
-    config = health_data.get('configuration', {})
-    
-    col1, col2, col3, col4 = st.columns(4)
-    
-    with col1:
-        st.metric("📚 Documents", health_data.get('document_count', 0))
-    with col2:
-        st.metric("🧩 Chunks", health_data.get('total_chunks', 0))
-    with col3:
-        st.metric("💬 Queries", stats_data.get('total_queries', 0))
-    with col4:
-        avg_chunks = stats_data.get('average_chunks_per_document', 0)
-        st.metric("📊 Avg Chunks/Doc", f"{avg_chunks:.1f}")
-    
-    st.markdown("---")
-    
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        st.info(f"**🤖 LLM Model**\n\n`{config.get('model', 'N/A')}`")
-    with col2:
-        st.info(f"**🔢 Embedding Model**\n\n`{config.get('embedding_model', 'N/A')}`")
-    with col3:
-        st.info(f"**🌡️ Temperature**\n\n`{config.get('temperature', 0.7)}`")
-
-
 def upload_files(files: List, api_client: RAGAPIClient):
     """Handle file upload with progress tracking"""
     success_count = 0
@@ -242,132 +201,10 @@ def upload_files(files: List, api_client: RAGAPIClient):
     
     if success_count > 0:
         time.sleep(1.5)
+        # Clear the uploaded files from session state
+        if 'uploaded_files' in st.session_state:
+            del st.session_state.uploaded_files
         st.rerun()
-
-# ============================================================================
-# DIALOGS
-# ============================================================================
-
-@st.dialog("⚙️ System Settings", width="large")
-def settings_dialog(api_client: RAGAPIClient):
-    """Settings modal dialog"""
-    models_data = api_client.get_models()
-    health_status, health_data = api_client.health_check()
-    
-    current_config = (health_data.get('configuration', {}) if health_data 
-                     else models_data.get('current_config', {}))
-    
-    st.subheader("🤖 Model Configuration")
-    
-    with st.form("config_form"):
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            llm_models = models_data.get('ollama', {}).get('llm_models', ['phi3'])
-            current_llm = current_config.get('model', 'phi3')
-            llm_index = llm_models.index(current_llm) if current_llm in llm_models else 0
-            
-            llm_model = st.selectbox(
-                "LLM Model",
-                options=llm_models,
-                index=llm_index,
-                help="Model for generating answers"
-            )
-        
-        with col2:
-            embedding_models = models_data.get('ollama', {}).get('embedding_models', ['nomic-embed-text'])
-            current_embedding = current_config.get('embedding_model', 'nomic-embed-text')
-            embed_index = embedding_models.index(current_embedding) if current_embedding in embedding_models else 0
-            
-            embedding_model = st.selectbox(
-                "Embedding Model",
-                options=embedding_models,
-                index=embed_index,
-                help="Model for document embeddings"
-            )
-        
-        st.markdown("---")
-        st.subheader("📝 Text Processing")
-        
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            chunk_size = st.number_input(
-                "Chunk Size", 
-                min_value=100, 
-                max_value=2000, 
-                value=current_config.get('chunk_size', 1000), 
-                step=50
-            )
-            
-            temperature = st.slider(
-                "Temperature", 
-                0.0, 
-                2.0, 
-                float(current_config.get('temperature', 0.7)), 
-                step=0.1
-            )
-        
-        with col2:
-            chunk_overlap = st.number_input(
-                "Chunk Overlap", 
-                min_value=0, 
-                max_value=500, 
-                value=current_config.get('chunk_overlap', 200), 
-                step=25
-            )
-        
-        st.markdown("---")
-        
-        col1, col2, col3 = st.columns([1, 1, 1])
-        with col1:
-            submitted = st.form_submit_button("💾 Update Configuration", type="primary", use_container_width=True)
-        with col2:
-            apply_and_rebuild = st.form_submit_button("💾 Update & Rebuild", use_container_width=True)
-        with col3:
-            cancel = st.form_submit_button("❌ Cancel", use_container_width=True)
-    
-    if cancel:
-        st.rerun()
-    
-    if submitted or apply_and_rebuild:
-        config = {
-            "model": llm_model,
-            "embedding_model": embedding_model,
-            "chunk_size": chunk_size,
-            "chunk_overlap": chunk_overlap,
-            "temperature": temperature
-        }
-        
-        with st.spinner("Updating configuration..."):
-            status_code, response = api_client.configure_system(config)
-        
-        if status_code == 200:
-            st.success("✅ Configuration updated successfully!")
-            
-            changed_fields = response.get('changed_fields', [])
-            if changed_fields:
-                st.info(f"📝 Changed fields: {', '.join(changed_fields)}")
-            
-            if 'embedding_model' in changed_fields:
-                st.warning("⚠️ Embedding model changed! You should rebuild vectors.")
-            
-            if apply_and_rebuild:
-                with st.spinner("Rebuilding vectors..."):
-                    rebuild_status, rebuild_response = api_client.rebuild_vectors()
-                    
-                    if rebuild_status == 200:
-                        st.success("✅ Vectors rebuilt successfully!")
-                        results = rebuild_response.get('results', {})
-                        success_count = sum(1 for r in results.values() if r.get('success'))
-                        st.info(f"📊 Rebuilt {success_count}/{len(results)} documents")
-                    else:
-                        st.error(f"❌ Rebuild failed: {rebuild_response.get('message', 'Unknown error')}")
-            
-            time.sleep(1.5)
-            st.rerun()
-        else:
-            st.error(f"❌ Configuration update failed: {response.get('message', 'Unknown error')}")
 
 # ============================================================================
 # SIDEBAR
@@ -390,50 +227,43 @@ def render_sidebar(api_client: RAGAPIClient):
                 render_document_card(doc, api_client)
             
             st.markdown("---")
-            col1, col2 = st.columns(2)
-            
-            with col1:
-                if st.button("🗑️ Clear All", use_container_width=True, type="secondary"):
-                    if st.session_state.get('confirm_clear', False):
-                        with st.spinner("Clearing..."):
-                            status_code, response = api_client.clear_all_documents()
-                        if status_code == 200:
-                            st.success("✅ Cleared!")
-                            st.session_state.confirm_clear = False
-                            time.sleep(0.5)
-                            st.rerun()
-                        else:
-                            st.error(f"❌ {response.get('message')}")
-                    else:
-                        st.session_state.confirm_clear = True
-                        st.warning("⚠️ Click again to confirm")
-            
-            with col2:
-                if st.button("🔄 Rebuild", use_container_width=True):
-                    with st.spinner("Rebuilding..."):
-                        status_code, response = api_client.rebuild_vectors()
+            if st.button("🗑️ Clear All", use_container_width=True, type="secondary"):
+                if st.session_state.get('confirm_clear', False):
+                    with st.spinner("Clearing..."):
+                        status_code, response = api_client.clear_all_documents()
                     if status_code == 200:
-                        st.success("✅ Done!")
+                        st.success("✅ Cleared!")
+                        st.session_state.confirm_clear = False
                         time.sleep(0.5)
                         st.rerun()
                     else:
-                        st.error("❌ Failed")
+                        st.error(f"❌ {response.get('message')}")
+                else:
+                    st.session_state.confirm_clear = True
+                    st.warning("⚠️ Click again to confirm")
         else:
             st.info("💡 No documents yet. Upload below to get started!")
         
         st.markdown("---")
         st.subheader("📤 Upload Documents")
         
-        uploaded_files = st.file_uploader(
-            "Choose files",
-            type=ALLOWED_EXTENSIONS,
-            accept_multiple_files=True,
-            help=f"Supported: {', '.join(ALLOWED_EXTENSIONS).upper()} (max {MAX_FILE_SIZE_MB}MB each)"
-        )
+        # Only show file uploader if files haven't been processed
+        if 'uploaded_files' not in st.session_state:
+            uploaded_files = st.file_uploader(
+                "Choose files",
+                type=ALLOWED_EXTENSIONS,
+                accept_multiple_files=True,
+                help=f"Supported: {', '.join(ALLOWED_EXTENSIONS).upper()} (max {MAX_FILE_SIZE_MB}MB each)",
+                key="file_uploader"
+            )
+            
+            if uploaded_files:
+                st.session_state.uploaded_files = uploaded_files
         
-        if uploaded_files:
+        # Show process button if files are selected
+        if st.session_state.get('uploaded_files'):
             if st.button("🚀 Process Files", type="primary", use_container_width=True):
-                upload_files(uploaded_files, api_client)
+                upload_files(st.session_state.uploaded_files, api_client)
         
         if st.session_state.get('chat_history') and st.session_state.chat_history:
             st.markdown("---")
@@ -445,7 +275,7 @@ def render_sidebar(api_client: RAGAPIClient):
 # CHAT INTERFACE
 # ============================================================================
 
-def render_chat_interface(api_client: RAGAPIClient, health_data: Dict):
+def render_chat_interface(api_client: RAGAPIClient, health_data: Dict, selected_model: str):
     """Render main chat interface"""
     
     if health_data and health_data.get('document_count', 0) == 0:
@@ -458,7 +288,7 @@ def render_chat_interface(api_client: RAGAPIClient, health_data: Dict):
             1. **Upload Documents** 📤 - Click the sidebar and upload PDF, TXT, or DOCX files
             2. **Ask Questions** 💬 - Type your question in the chat input below
             3. **Get Answers** 🎯 - Receive AI-powered answers with source citations
-            4. **Configure Settings** ⚙️ - Click the settings button to customize models
+            4. **Select Model** 🤖 - Choose your preferred LLM model from the dropdown above
             """)
         return
     
@@ -467,7 +297,7 @@ def render_chat_interface(api_client: RAGAPIClient, health_data: Dict):
     
     ollama_status = health_data.get('ollama_status', {}) if health_data else {}
     if ollama_status.get('available'):
-        st.success("✓ Ollama Connected")
+        st.success("✔ Ollama Connected")
     else:
         st.error("✗ Ollama Unavailable")
 
@@ -482,10 +312,10 @@ def render_chat_interface(api_client: RAGAPIClient, health_data: Dict):
                     st.markdown(endpoint_badge, unsafe_allow_html=True)
     
     if prompt := st.chat_input("💭 Ask your documents anything..."):
-        handle_chat_input(prompt, api_client)
+        handle_chat_input(prompt, api_client, selected_model)
 
 
-def handle_chat_input(prompt: str, api_client: RAGAPIClient):
+def handle_chat_input(prompt: str, api_client: RAGAPIClient, model: str):
     """Handle user chat input"""
     st.session_state.chat_history.append({
         "role": "user",
@@ -503,7 +333,7 @@ def handle_chat_input(prompt: str, api_client: RAGAPIClient):
         endpoint_type = None
         
         try:
-            for data in api_client.query_stream(prompt):
+            for data in api_client.query_stream(prompt, model=model):
                 if data.get('type') == 'metadata':
                     sources = data.get('sources', [])
                     endpoint_type = data.get('endpoint_type')
@@ -566,27 +396,31 @@ def main():
     
     render_sidebar(api_client)
     
-    col1, col2, col3 = st.columns([6, 1, 1])
+    # Header with model dropdown
+    col1, col2 = st.columns([4, 1])
     
     with col1:
         st.markdown('<h2 style="margin-bottom: 0;">💬 Chat with Your Documents</h2>', unsafe_allow_html=True)
     
     with col2:
-        if st.button("📊", help="Dashboard", use_container_width=True):
-            st.session_state.show_dashboard = not st.session_state.get('show_dashboard', False)
+        # Get available models
+        models_data = api_client.get_models()
+        llm_models = models_data.get('ollama', {}).get('llm_models', ['phi3', 'llama3', 'mistral', 'deepseek-r1'])
+        current_config = health_data.get('configuration', {}) if health_data else {}
+        current_model = current_config.get('model', 'phi3')
+        
+        # Model selection dropdown
+        selected_model = st.selectbox(
+            "🤖 Model",
+            options=llm_models,
+            index=llm_models.index(current_model) if current_model in llm_models else 0,
+            key="model_selector",
+            label_visibility="collapsed"
+        )
     
-    with col3:
-        if st.button("⚙️", help="Settings", use_container_width=True):
-            settings_dialog(api_client)
+    st.markdown("---")
     
-    if st.session_state.get('show_dashboard', False):
-        st.markdown("---")
-        st.markdown("### 📊 System Dashboard")
-        stats_data = api_client.get_stats()
-        render_metrics_dashboard(health_data, stats_data)
-        st.markdown("---")
-    
-    render_chat_interface(api_client, health_data)
+    render_chat_interface(api_client, health_data, selected_model)
 
 
 if __name__ == "__main__":
