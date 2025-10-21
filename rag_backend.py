@@ -3,13 +3,12 @@ import json
 import logging
 import traceback
 import re
-from langsmith import expect
-import requests
 from datetime import datetime
 from pathlib import Path
 from typing import List, Dict, Any, Optional, Iterator
 from contextlib import asynccontextmanager
 
+import requests
 import uvicorn
 from fastapi import FastAPI, File, UploadFile, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -87,11 +86,10 @@ class DocumentInfo(BaseModel):
     type: str
 
 
-# Ollama LLM with automatic endpoint detection via model inspection
+# Ollama LLM with automatic endpoint detection
 class OllamaLLM:
-    """Universal Ollama LLM client with automatic endpoint detection via model inspection."""
+    """Universal Ollama LLM client with automatic endpoint detection."""
     
-    # Known chat-capable model patterns
     CHAT_MODEL_PATTERNS = [
         'llama3', 'llama-3', 'gemma', 'qwen', 'mistral', 'mixtral',
         'phi3', 'phi-3', 'command', 'deepseek', 'llava', 'openchat',
@@ -125,12 +123,11 @@ class OllamaLLM:
             show_url = f"{self.base_url}/api/show"
             payload = {"name": self.model}
             
-            logger.debug(f"Fetching model info for: {self.model}")
             response = requests.post(show_url, json=payload, timeout=10)
             
             if response.status_code == 200:
                 self.model_info = response.json()
-                logger.debug(f"Model info retrieved successfully for {self.model}")
+                logger.debug(f"Model info retrieved for {self.model}")
                 return self.model_info
             elif response.status_code == 404:
                 logger.warning(f"Model '{self.model}' not found in Ollama")
@@ -138,9 +135,6 @@ class OllamaLLM:
             else:
                 logger.warning(f"Unexpected status {response.status_code} from show API")
                 return {}
-        except requests.exceptions.Timeout:
-            logger.warning(f"Timeout fetching model info for {self.model}")
-            return {}
         except Exception as e:
             logger.debug(f"Error fetching model info: {e}")
             return {}
@@ -152,30 +146,25 @@ class OllamaLLM:
         if not model_info:
             return None
         
-        # Check template for chat indicators
         template = model_info.get('template', '').lower()
         modelfile = model_info.get('modelfile', '').lower()
         
-        # Strong indicators for chat endpoint
         chat_indicators = [
             '{{.system}}', '{{.prompt}}', '<|im_start|>', '<|start_header_id|>',
             '[inst]', '<|user|>', '<|assistant|>', 'chatml', 'chat_template'
         ]
         
-        # Check template
         if any(indicator in template for indicator in chat_indicators):
-            logger.info(f"Model {self.model} supports chat (template indicators found)")
+            logger.info(f"Model {self.model} supports chat (template)")
             return "chat"
         
-        # Check modelfile for chat-related configurations
         if 'chat' in modelfile or any(indicator in modelfile for indicator in chat_indicators):
-            logger.info(f"Model {self.model} supports chat (modelfile indicators found)")
+            logger.info(f"Model {self.model} supports chat (modelfile)")
             return "chat"
         
-        # Check model parameters
         parameters = model_info.get('parameters', '')
         if 'chat' in parameters.lower():
-            logger.info(f"Model {self.model} supports chat (parameter indicators found)")
+            logger.info(f"Model {self.model} supports chat (parameters)")
             return "chat"
         
         return None
@@ -184,64 +173,26 @@ class OllamaLLM:
         """Fallback: detect endpoint from model name patterns."""
         model_lower = self.model.lower()
         
-        # Check against known chat model patterns
         for pattern in self.CHAT_MODEL_PATTERNS:
             if pattern in model_lower:
-                logger.info(f"Model {self.model} likely supports chat (name pattern match)")
+                logger.info(f"Model {self.model} likely supports chat (name pattern)")
                 return "chat"
         
-        # Default to generate for unknown models
         logger.info(f"Model {self.model} defaulting to generate endpoint")
         return "generate"
     
     def _detect_endpoint(self) -> None:
-        """Detect which endpoint the model supports using model inspection."""
+        """Detect which endpoint the model supports."""
         if self.endpoint_type is not None:
             return
         
-        logger.debug(f"Detecting endpoint for model: {self.model}")
-        
-        # Step 1: Try model inspection API
         detected_type = self._detect_endpoint_from_model_info()
         
-        # Step 2: Fallback to name-based detection
         if detected_type is None:
             detected_type = self._detect_endpoint_from_name()
         
         self.endpoint_type = detected_type
         logger.info(f"Model {self.model} will use /api/{self.endpoint_type} endpoint")
-    
-    def _verify_endpoint_with_minimal_call(self) -> None:
-        """Verify endpoint works with a minimal test call (only on first use)."""
-        if self.model_loaded:
-            return
-        
-        try:
-            url, payload = self._build_payload("test", stream=False)
-            
-            # Make a minimal test call with very short response
-            if self.endpoint_type == "chat":
-                payload["messages"] = [{"role": "user", "content": "Hi"}]
-                payload["options"] = {"num_predict": 1}  # Only generate 1 token
-            else:
-                payload["prompt"] = "Hi"
-                payload["options"] = {"num_predict": 1}
-            
-            logger.debug(f"Verifying {self.endpoint_type} endpoint with minimal call")
-            response = requests.post(url, json=payload, timeout=15)
-            
-            if response.status_code == 200:
-                self.model_loaded = True
-                logger.info(f"Endpoint verification successful for {self.model}")
-            elif response.status_code == 404 and self.endpoint_type == "chat":
-                # Fallback to generate if chat fails
-                logger.warning(f"Chat endpoint failed, switching to generate for {self.model}")
-                self.endpoint_type = "generate"
-                self.model_loaded = False  # Retry with generate
-            else:
-                logger.warning(f"Endpoint verification returned status {response.status_code}")
-        except Exception as e:
-            logger.debug(f"Endpoint verification failed (will retry on actual use): {e}")
     
     def _build_payload(self, prompt: str, stream: bool) -> tuple[str, dict]:
         """Build request payload based on endpoint type."""
@@ -274,28 +225,20 @@ class OllamaLLM:
             return data.get("message", {}).get("content", "")
         return data.get("response", "")
 
-    def _get_time_out(self, is_first_call: bool = False) -> int:
-        """Get the timeout value."""
-        if is_first_call or not self.model_loaded:
-            return self.cold_start_timeout
-        return self.timeout
+    def _get_timeout(self) -> int:
+        """Get appropriate timeout value."""
+        return self.cold_start_timeout if not self.model_loaded else self.timeout
 
     def invoke(self, prompt: str) -> str:
         """Invoke the model with a prompt."""
         try:
-            # Verify endpoint on first call (if not already done)
-            if not self.model_loaded:
-                self._verify_endpoint_with_minimal_call()
-            
             url, payload = self._build_payload(prompt, stream=False)
-            current_timeout = self._get_time_out()
-            logger.info(f"Invoking model {self.model} with timeout {current_timeout}s")
-
+            current_timeout = self._get_timeout()
+            
             response = requests.post(url, json=payload, timeout=current_timeout)
             
-            # Handle endpoint mismatch
             if response.status_code == 404 and self.endpoint_type == "chat":
-                logger.warning(f"Chat endpoint failed, retrying with generate endpoint")
+                logger.warning(f"Chat endpoint failed, retrying with generate")
                 self.endpoint_type = "generate"
                 url, payload = self._build_payload(prompt, stream=False)
                 response = requests.post(url, json=payload, timeout=current_timeout)
@@ -316,25 +259,18 @@ class OllamaLLM:
     def stream(self, prompt: str) -> Iterator[str]:
         """Stream the model's response."""
         try:
-            # Verify endpoint on first call (if not already done)
-            if not self.model_loaded:
-                self._verify_endpoint_with_minimal_call()
-            
             url, payload = self._build_payload(prompt, stream=True)
-            current_timeout = self._get_time_out()
-            logger.info(f"Streaming from model {self.model} with timeout {current_timeout}s")
+            current_timeout = self._get_timeout()
             
             response = requests.post(url, json=payload, timeout=current_timeout, stream=True)
             
-            # Handle endpoint mismatch
             if response.status_code == 404 and self.endpoint_type == "chat":
-                logger.warning(f"Chat endpoint failed, retrying with generate endpoint")
+                logger.warning(f"Chat endpoint failed, retrying with generate")
                 self.endpoint_type = "generate"
                 url, payload = self._build_payload(prompt, stream=True)
                 response = requests.post(url, json=payload, timeout=current_timeout, stream=True)
             
             response.raise_for_status()
-            first_chunk = True
             
             for line in response.iter_lines():
                 if line:
@@ -342,10 +278,9 @@ class OllamaLLM:
                         data = json.loads(line)
                         content = self._extract_content(data)
                         
-                        if first_chunk and content:
+                        if content and not self.model_loaded:
                             self.model_loaded = True
-                            logger.info(f"Model {self.model} loaded successfully on first stream chunk")
-                            first_chunk = False
+                            logger.info(f"Model {self.model} loaded successfully")
 
                         if content:
                             yield content
@@ -355,11 +290,7 @@ class OllamaLLM:
                     except json.JSONDecodeError:
                         continue
         except requests.exceptions.Timeout:
-            error_msg = (
-                f"Streaming request timed out after {current_timeout}s."
-                f" Large models like {self.model} may require more time to start."
-                f" Please try again. Subsequent requests should be faster."
-            )
+            error_msg = f"Streaming timed out after {current_timeout}s. Try again."
             logger.error(error_msg)
             raise ValueError(error_msg)
         except requests.exceptions.HTTPError as e:
@@ -398,7 +329,6 @@ class ConfigManager:
                     self.config.update(json.load(f))
                 logger.info(f"Loaded config: model={self.config['model']}")
             else:
-                logger.info("No existing config file, using defaults")
                 self.save()
         except Exception as e:
             logger.error(f"Error loading config: {e}, using defaults")
@@ -409,7 +339,6 @@ class ConfigManager:
             self.config_file.parent.mkdir(parents=True, exist_ok=True)
             with open(self.config_file, 'w') as f:
                 json.dump(self.config, f, indent=2)
-            logger.debug("Configuration saved")
         except Exception as e:
             logger.error(f"Error saving config: {e}")
     
@@ -506,10 +435,11 @@ class ModelManager:
         self.config = config
         self.embeddings_model: Optional[OllamaEmbeddings] = None
         self.llm_cache: Dict[str, OllamaLLM] = {}
+        self._embeddings_initialized = False
     
     def get_embeddings_model(self) -> OllamaEmbeddings:
-        """Get or create embeddings model."""
-        if self.embeddings_model is None:
+        """Get or create embeddings model with proper initialization test."""
+        if self.embeddings_model is None or not self._embeddings_initialized:
             model_name = self.config.get('embedding_model')
             logger.info(f"Initializing embeddings model: {model_name}")
             
@@ -519,12 +449,21 @@ class ModelManager:
                     base_url=OLLAMA_BASE_URL
                 )
                 
-                # Test the model
-                test_embedding = self.embeddings_model.embed_query("test")
-                logger.info(f"Embeddings model '{model_name}' initialized, dimensions: {len(test_embedding)}")
+                # CRITICAL FIX: Test the model with a simple embedding
+                # This prevents first-upload failures by warming up the model
+                logger.debug(f"Testing embeddings model: {model_name}")
+                test_embedding = self.embeddings_model.embed_query("initialization test")
+                
+                if not test_embedding or len(test_embedding) == 0:
+                    raise ValueError(f"Embeddings model returned empty result")
+                
+                self._embeddings_initialized = True
+                logger.info(f"Embeddings model '{model_name}' initialized and tested, dimensions: {len(test_embedding)}")
             except Exception as e:
-                logger.error(f"Error initializing embeddings model '{model_name}': {e}")
-                raise ValueError(f"Failed to initialize embeddings model: {str(e)}")
+                self._embeddings_initialized = False
+                self.embeddings_model = None
+                logger.error(f"Failed to initialize embeddings model '{model_name}': {e}")
+                raise ValueError(f"Failed to initialize embeddings model '{model_name}': {str(e)}")
         
         return self.embeddings_model
     
@@ -544,12 +483,11 @@ class ModelManager:
                     cold_start_timeout=self.config.get('cold_start_timeout', 600)
                 )
                 self.llm_cache[model_to_use] = llm
-                logger.info(f"LLM model '{model_to_use}' cached successfully")
+                logger.info(f"LLM model '{model_to_use}' cached")
             except Exception as e:
                 logger.error(f"Error initializing LLM model '{model_to_use}': {e}")
                 raise ValueError(f"Failed to initialize LLM model: {str(e)}")
         
-        # Update temperature if specified
         if temperature is not None:
             self.llm_cache[model_to_use].temperature = temperature
         
@@ -558,6 +496,7 @@ class ModelManager:
     def reset_embeddings_model(self) -> None:
         """Reset embeddings model."""
         self.embeddings_model = None
+        self._embeddings_initialized = False
         logger.debug("Embeddings model reset")
     
     def reset_llm_cache(self) -> None:
@@ -625,7 +564,6 @@ class DocumentProcessor:
 # Utility Functions
 def clean_llm_response(text: str) -> str:
     """Clean LLM response by removing reasoning tags."""
-    # Remove thinking/reasoning tags
     patterns = [
         r'<think>.*?</think>',
         r'<reasoning>.*?</reasoning>',
@@ -636,7 +574,6 @@ def clean_llm_response(text: str) -> str:
     for pattern in patterns:
         text = re.sub(pattern, '', text, flags=re.DOTALL | re.IGNORECASE)
     
-    # Clean up excessive newlines
     text = re.sub(r'\n{3,}', '\n\n', text)
     return text.strip()
 
@@ -650,7 +587,6 @@ def get_available_models() -> tuple[List[str], List[str]]:
             data = response.json()
             all_models = [model['name'] for model in data.get('models', [])]
             
-            # Separate embedding and LLM models
             embedding_models = [m for m in all_models if 'embed' in m.lower() or 'nomic' in m.lower()]
             llm_models = [m for m in all_models if m not in embedding_models]
             
@@ -658,7 +594,6 @@ def get_available_models() -> tuple[List[str], List[str]]:
     except Exception as e:
         logger.debug(f"API-based model detection failed: {e}")
     
-    # Fallback defaults
     return ["phi3", "llama3", "mistral", "deepseek-r1"], ["nomic-embed-text"]
 
 
@@ -706,11 +641,19 @@ async def lifespan(app: FastAPI):
     
     try:
         vector_store.load()
-        logger.info("Vector store loaded successfully")
+        logger.info("Vector store loaded")
+        
+        # CRITICAL FIX: Pre-initialize embeddings model on startup
+        # This prevents first-upload failures
+        try:
+            model_manager.get_embeddings_model()
+            logger.info("Embeddings model pre-initialized successfully")
+        except Exception as e:
+            logger.warning(f"Could not pre-initialize embeddings model: {e}")
     except Exception as e:
         logger.warning(f"Could not load vector store: {e}")
     
-    logger.info("RAG Application started successfully")
+    logger.info("RAG Application started")
     
     yield
     
@@ -721,7 +664,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="RAG Assistant API",
     description="Production-ready RAG system with Ollama",
-    version="2.0.0",
+    version="2.1.0",
     docs_url="/docs",
     redoc_url="/redoc",
     lifespan=lifespan
@@ -776,7 +719,7 @@ async def health_check():
 @app.post("/upload", response_model=DocumentUploadResponse, tags=["Documents"])
 async def upload_document(file: UploadFile = File(...)):
     """Upload and process a document."""
-    logger.info(f"Upload request for file: {file.filename}")
+    logger.info(f"Upload request: {file.filename}")
     
     content = await file.read()
     file_size = len(content)
@@ -803,13 +746,16 @@ async def upload_document(file: UploadFile = File(...)):
         if not documents:
             raise ValueError("No content extracted from document")
         
-        # Generate embeddings
+        # CRITICAL FIX: Ensure embeddings model is initialized before generating embeddings
         embeddings_model = model_manager.get_embeddings_model()
+        
+        # Generate embeddings
         texts = [doc["page_content"] for doc in documents]
+        logger.debug(f"Generating embeddings for {len(texts)} chunks")
         embeddings = embeddings_model.embed_documents(texts)
         
         if not embeddings or len(embeddings) != len(documents):
-            raise ValueError("Failed to generate embeddings")
+            raise ValueError(f"Embeddings generation failed: expected {len(documents)}, got {len(embeddings) if embeddings else 0}")
         
         # Add to vector store
         vector_store.add_documents(documents, embeddings)
@@ -826,7 +772,7 @@ async def upload_document(file: UploadFile = File(...)):
         
         vector_store.save()
         
-        logger.info(f"Processed {file.filename}: {len(documents)} chunks, {file_size} bytes")
+        logger.info(f"Processed {file.filename}: {len(documents)} chunks")
         
         return DocumentUploadResponse(
             status="success",
@@ -836,7 +782,7 @@ async def upload_document(file: UploadFile = File(...)):
             message=f"Document processed successfully into {len(documents)} chunks"
         )
     except Exception as e:
-        logger.error(f"Error processing upload {file.filename}: {e}")
+        logger.error(f"Error processing {file.filename}: {e}")
         logger.debug(traceback.format_exc())
         
         # Cleanup on error
@@ -850,11 +796,10 @@ async def upload_document(file: UploadFile = File(...)):
 @app.post("/query", tags=["Query"])
 async def query_documents(request: Request, query: QueryRequest):
     """Query the document collection with streaming support."""
-    logger.info(f"Query: '{query.question[:50]}...' model: {query.model or config_manager.get('model')}")
+    logger.info(f"Query: '{query.question[:50]}...'")
     start_time = datetime.now()
     
     try:
-        # Validate documents exist
         if vector_store.get_stats().get("total_chunks", 0) == 0:
             raise HTTPException(status_code=400, detail="No documents available. Upload documents first.")
         
@@ -911,7 +856,7 @@ Respond naturally as the document. Your response:"""
                     # Stream content
                     for chunk in llm.stream(prompt):
                         if await request.is_disconnected():
-                            logger.info("Client disconnected, stopping stream")
+                            logger.info("Client disconnected")
                             break
                         if chunk:
                             yield f"data: {json.dumps({'type': 'content', 'content': chunk})}\n\n"
@@ -964,7 +909,7 @@ async def list_documents():
 @app.delete("/documents/{filename}", tags=["Documents"])
 async def delete_document(filename: str):
     """Delete a specific document."""
-    logger.info(f"Delete request for: {filename}")
+    logger.info(f"Delete request: {filename}")
     
     if not metadata_manager.exists(filename):
         raise HTTPException(status_code=404, detail=f"Document '{filename}' not found")
@@ -979,7 +924,7 @@ async def delete_document(filename: str):
         
         vector_store.save()
         
-        logger.info(f"Successfully deleted: {filename}")
+        logger.info(f"Deleted: {filename}")
         return {"message": f"Document '{filename}' deleted successfully"}
     except Exception as e:
         logger.error(f"Error deleting {filename}: {e}")
@@ -1001,7 +946,7 @@ async def clear_all_documents():
         
         vector_store.save()
         
-        logger.info("Successfully cleared all documents")
+        logger.info("Cleared all documents")
         return {"message": "All documents cleared successfully", "cleared": True}
     except Exception as e:
         logger.error(f"Error clearing documents: {e}")
@@ -1042,8 +987,6 @@ async def configure_system(config_update: ModelConfig):
 @app.get("/models", tags=["Configuration"])
 async def get_models():
     """Get available models."""
-    logger.debug("Get models request")
-    
     try:
         llm_models, embedding_models = get_available_models()
         
@@ -1074,8 +1017,6 @@ async def get_models():
 @app.get("/stats", tags=["Statistics"])
 async def get_statistics():
     """Get system statistics."""
-    logger.debug("Statistics request")
-    
     try:
         stats = vector_store.get_stats()
         doc_count = len(metadata_manager.metadata)
@@ -1114,8 +1055,6 @@ async def rebuild_vectors():
         
         for filename in list(metadata_manager.metadata.keys()):
             try:
-                logger.debug(f"Rebuilding vectors for {filename}")
-                
                 file_path = UPLOAD_DIR / filename
                 if not file_path.exists():
                     results[filename] = {"success": False, "error": "File not found"}
@@ -1138,7 +1077,6 @@ async def rebuild_vectors():
                 metadata_manager.add(filename, metadata)
                 
                 results[filename] = {"success": True, "chunks": len(documents)}
-                logger.debug(f"Successfully rebuilt {filename}: {len(documents)} chunks")
             except Exception as e:
                 logger.error(f"Error rebuilding {filename}: {e}")
                 results[filename] = {"success": False, "error": str(e)}
