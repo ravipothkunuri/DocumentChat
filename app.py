@@ -25,13 +25,17 @@ class RAGAPIClient:
         self.base_url = base_url
         self.session = requests.Session()
     
-    def _handle_response(self, response: requests.Response) -> Tuple[int, Dict]:
-        """Centralized response handling"""
+    def _request(self, method: str, endpoint: str, timeout: int = 10, **kwargs) -> Tuple[int, Dict]:
+        """Unified request handler with error handling."""
         try:
+            url = f"{self.base_url}{endpoint}"
+            response = self.session.request(method, url, timeout=timeout, **kwargs)
             data = response.json() if response.content else {}
             return response.status_code, data
         except json.JSONDecodeError:
             return response.status_code, {"message": "Invalid response from server"}
+        except requests.exceptions.RequestException as e:
+            return 500, {"message": f"Connection error: {str(e)}"}
     
     def health_check(self) -> Tuple[bool, Optional[Dict]]:
         """Check backend health"""
@@ -43,106 +47,54 @@ class RAGAPIClient:
     
     def get_models(self) -> Dict:
         """Get available models"""
-        try:
-            response = self.session.get(f"{self.base_url}/models", timeout=10)
-            if response.ok:
-                return response.json()
-        except requests.exceptions.RequestException:
-            pass
-        return {
+        status_code, data = self._request('GET', '/models')
+        return data if status_code == 200 else {
             "ollama": {
                 "llm_models": ["phi3", "llama3", "mistral", "deepseek-r1"],
                 "embedding_models": ["nomic-embed-text"]
             },
-            "current_config": {
-                "model": "phi3",
-                "embedding_model": "nomic-embed-text"
-            }
+            "current_config": {"model": "phi3", "embedding_model": "nomic-embed-text"}
         }
     
     def get_documents(self) -> List[Dict]:
         """Get list of uploaded documents"""
-        try:
-            response = self.session.get(f"{self.base_url}/documents", timeout=10)
-            if response.ok:
-                return response.json()
-        except requests.exceptions.RequestException:
-            pass
-        return []
+        status_code, data = self._request('GET', '/documents')
+        return data if status_code == 200 else []
     
     def get_stats(self) -> Dict:
         """Get system statistics"""
-        try:
-            response = self.session.get(f"{self.base_url}/stats", timeout=10)
-            if response.ok:
-                return response.json()
-        except requests.exceptions.RequestException:
-            pass
-        return {}
+        status_code, data = self._request('GET', '/stats')
+        return data if status_code == 200 else {}
     
     def upload_file(self, file) -> Tuple[int, Dict]:
         """Upload a file to the backend"""
         try:
             files = {"file": (file.name, file, file.type)}
-            response = self.session.post(
-                f"{self.base_url}/upload", 
-                files=files, 
-                timeout=60
-            )
-            return self._handle_response(response)
-        except requests.exceptions.RequestException as e:
-            return 500, {"message": f"Connection error: {str(e)}"}
+            response = self.session.post(f"{self.base_url}/upload", files=files, timeout=60)
+            return response.status_code, response.json() if response.content else {}
+        except Exception as e:
+            return 500, {"message": f"Upload error: {str(e)}"}
     
     def delete_document(self, filename: str) -> Tuple[int, Dict]:
         """Delete a specific document"""
-        try:
-            response = self.session.delete(
-                f"{self.base_url}/documents/{filename}", 
-                timeout=30
-            )
-            return self._handle_response(response)
-        except requests.exceptions.RequestException as e:
-            return 500, {"message": f"Connection error: {str(e)}"}
+        return self._request('DELETE', f'/documents/{filename}', timeout=30)
     
     def clear_all_documents(self) -> Tuple[int, Dict]:
         """Clear all documents"""
-        try:
-            response = self.session.delete(f"{self.base_url}/clear", timeout=30)
-            return self._handle_response(response)
-        except requests.exceptions.RequestException as e:
-            return 500, {"message": f"Connection error: {str(e)}"}
+        return self._request('DELETE', '/clear', timeout=30)
     
     def configure_system(self, config: Dict) -> Tuple[int, Dict]:
         """Update system configuration"""
-        try:
-            response = self.session.post(
-                f"{self.base_url}/configure", 
-                json=config, 
-                timeout=30
-            )
-            return self._handle_response(response)
-        except requests.exceptions.RequestException as e:
-            return 500, {"message": f"Connection error: {str(e)}"}
+        return self._request('POST', '/configure', json=config, timeout=30)
     
     def rebuild_vectors(self) -> Tuple[int, Dict]:
         """Rebuild vector store"""
-        try:
-            response = self.session.post(
-                f"{self.base_url}/rebuild-vectors", 
-                timeout=120
-            )
-            return self._handle_response(response)
-        except requests.exceptions.RequestException as e:
-            return 500, {"message": f"Connection error: {str(e)}"}
+        return self._request('POST', '/rebuild-vectors', timeout=120)
     
     def query_stream(self, question: str, top_k: int = 4, model: str = None, temperature: float = None):
         """Stream query response"""
         try:
-            payload = {
-                "question": question, 
-                "stream": True, 
-                "top_k": top_k
-            }
+            payload = {"question": question, "stream": True, "top_k": top_k}
             
             if model:
                 payload["model"] = model
@@ -175,7 +127,6 @@ def apply_custom_css():
     """Apply custom CSS for better UI"""
     st.markdown("""
     <style>
-    /* Base theme improvements */
     .main-header {
         font-size: 2.5rem;
         font-weight: 700;
@@ -186,7 +137,6 @@ def apply_custom_css():
         margin-bottom: 1rem;
     }
     
-    /* Status indicators */
     .status-badge {
         display: inline-block;
         padding: 0.25rem 0.75rem;
@@ -195,79 +145,16 @@ def apply_custom_css():
         font-weight: 600;
     }
     
-    .status-success {
-        background-color: #d4edda;
-        color: #155724;
-    }
+    .status-success { background-color: #d4edda; color: #155724; }
+    .status-error { background-color: #f8d7da; color: #721c24; }
+    .status-info { background-color: #d1ecf1; color: #0c5460; }
     
-    .status-error {
-        background-color: #f8d7da;
-        color: #721c24;
-    }
-    
-    .status-info {
-        background-color: #d1ecf1;
-        color: #0c5460;
-    }
-    
-    /* Document cards */
-    .doc-card {
-        background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
-        padding: 1rem;
-        border-radius: 0.75rem;
-        margin: 0.5rem 0;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-    }
-    
-    /* Mobile responsive styles */
     @media screen and (max-width: 768px) {
-        .main-header {
-            font-size: 1.8rem;
-            margin-bottom: 1rem;
-        }
-        
-        .stButton button {
-            width: 100% !important;
-            margin: 0.25rem 0 !important;
-            min-height: 44px !important;
-            padding: 0.75rem 1rem !important;
-        }
-        
-        .row-widget.stHorizontalBlock {
-            flex-direction: column !important;
-        }
-        
-        .stTextInput, .stTextArea, .stFileUploader {
-            width: 100% !important;
-        }
-        
-        div[data-testid="metric-container"] {
-            min-width: 100% !important;
-            margin-bottom: 1rem;
-        }
-        
-        section[data-testid="stSidebar"] {
-            width: 100% !important;
-        }
-        
-        .stSelectbox, .stSlider, .stNumberInput {
-            width: 100% !important;
-            margin-bottom: 1rem !important;
-        }
+        .main-header { font-size: 1.8rem; }
+        .stButton button { width: 100% !important; min-height: 44px !important; }
+        div[data-testid="metric-container"] { min-width: 100% !important; }
     }
     
-    /* Tablet styles */
-    @media screen and (min-width: 769px) and (max-width: 1024px) {
-        .main-header {
-            font-size: 2rem;
-        }
-        
-        div[data-testid="column"] {
-            padding: 0 0.5rem !important;
-        }
-    }
-    
-    /* Hide Streamlit branding */
     #MainMenu {visibility: hidden;}
     footer {visibility: hidden;}
     </style>
@@ -277,83 +164,85 @@ def apply_custom_css():
 # UI COMPONENTS
 # ============================================================================
 
-class UIComponents:
-    """Reusable UI components"""
-    
-    @staticmethod
-    def render_document_card(doc: Dict, api_client: RAGAPIClient):
-        """Render a document card with actions"""
-        with st.expander(f"📄 {doc['filename']}", expanded=False):
-            col1, col2 = st.columns([3, 1])
-            
-            with col1:
-                st.caption(f"**Type:** {doc['type'].upper()}")
-                st.caption(f"**Size:** {doc['size']:,} bytes")
-                st.caption(f"**Chunks:** {doc['chunks']}")
-                st.caption(f"**Uploaded:** {doc['uploaded_at'][:19]}")
-            
-            with col2:
-                if st.button("🗑️", key=f"delete_{doc['filename']}", 
-                           help="Delete document", use_container_width=True):
-                    status_code, response = api_client.delete_document(doc['filename'])
-                    if status_code == 200:
-                        st.success(f"✅ Deleted")
-                        time.sleep(0.5)
-                        st.rerun()
-                    else:
-                        st.error(f"❌ {response.get('message', 'Failed')}")
-    
-    @staticmethod
-    def render_metrics_dashboard(health_data: Dict, stats_data: Dict):
-        """Render system metrics dashboard"""
-        if not health_data:
-            return
-        
-        config = health_data.get('configuration', {})
-        
-        col1, col2, col3, col4 = st.columns(4)
+def render_document_card(doc: Dict, api_client: RAGAPIClient):
+    """Render a document card with actions"""
+    with st.expander(f"📄 {doc['filename']}", expanded=False):
+        col1, col2 = st.columns([3, 1])
         
         with col1:
-            st.metric(
-                "📚 Documents", 
-                health_data.get('document_count', 0),
-                help="Total documents uploaded"
-            )
+            st.caption(f"**Type:** {doc['type'].upper()}")
+            st.caption(f"**Size:** {doc['size']:,} bytes")
+            st.caption(f"**Chunks:** {doc['chunks']}")
+            st.caption(f"**Uploaded:** {doc['uploaded_at'][:19]}")
         
         with col2:
-            st.metric(
-                "🧩 Chunks", 
-                health_data.get('total_chunks', 0),
-                help="Total text chunks indexed"
-            )
+            if st.button("🗑️", key=f"delete_{doc['filename']}", 
+                       help="Delete document", use_container_width=True):
+                status_code, response = api_client.delete_document(doc['filename'])
+                if status_code == 200:
+                    st.success(f"✅ Deleted")
+                    time.sleep(0.5)
+                    st.rerun()
+                else:
+                    st.error(f"❌ {response.get('message', 'Failed')}")
+
+
+def render_metrics_dashboard(health_data: Dict, stats_data: Dict):
+    """Render system metrics dashboard"""
+    if not health_data:
+        return
+    
+    config = health_data.get('configuration', {})
+    
+    col1, col2, col3, col4 = st.columns(4)
+    
+    with col1:
+        st.metric("📚 Documents", health_data.get('document_count', 0))
+    with col2:
+        st.metric("🧩 Chunks", health_data.get('total_chunks', 0))
+    with col3:
+        st.metric("💬 Queries", stats_data.get('total_queries', 0))
+    with col4:
+        avg_chunks = stats_data.get('average_chunks_per_document', 0)
+        st.metric("📊 Avg Chunks/Doc", f"{avg_chunks:.1f}")
+    
+    st.markdown("---")
+    
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.info(f"**🤖 LLM Model**\n\n`{config.get('model', 'N/A')}`")
+    with col2:
+        st.info(f"**🔢 Embedding Model**\n\n`{config.get('embedding_model', 'N/A')}`")
+    with col3:
+        st.info(f"**🌡️ Temperature**\n\n`{config.get('temperature', 0.7)}`")
+
+
+def upload_files(files: List, api_client: RAGAPIClient):
+    """Handle file upload with progress tracking"""
+    success_count = 0
+    total_files = len(files)
+    
+    progress_bar = st.progress(0)
+    status_text = st.empty()
+    
+    for i, file in enumerate(files):
+        status_text.text(f"⏳ Uploading {file.name}...")
         
-        with col3:
-            st.metric(
-                "💬 Queries", 
-                stats_data.get('total_queries', 0),
-                help="Total queries processed"
-            )
+        status_code, response = api_client.upload_file(file)
         
-        with col4:
-            avg_chunks = stats_data.get('average_chunks_per_document', 0)
-            st.metric(
-                "📊 Avg Chunks/Doc", 
-                f"{avg_chunks:.1f}",
-                help="Average chunks per document"
-            )
+        if status_code == 200:
+            st.success(f"✅ {file.name}: {response.get('chunks', 0)} chunks created")
+            success_count += 1
+        else:
+            st.error(f"❌ {file.name}: {response.get('message', 'Failed')}")
         
-        st.markdown("---")
-        
-        col1, col2, col3 = st.columns(3)
-        
-        with col1:
-            st.info(f"**🤖 LLM Model**\n\n`{config.get('model', 'N/A')}`")
-        
-        with col2:
-            st.info(f"**🔢 Embedding Model**\n\n`{config.get('embedding_model', 'N/A')}`")
-        
-        with col3:
-            st.info(f"**🌡️ Temperature**\n\n`{config.get('temperature', 0.7)}`")
+        progress_bar.progress((i + 1) / total_files)
+    
+    status_text.text(f"✨ Complete: {success_count}/{total_files} uploaded")
+    
+    if success_count > 0:
+        time.sleep(1.5)
+        st.rerun()
 
 # ============================================================================
 # DIALOGS
@@ -365,12 +254,8 @@ def settings_dialog(api_client: RAGAPIClient):
     models_data = api_client.get_models()
     health_status, health_data = api_client.health_check()
     
-    # Get current configuration
-    current_config = {}
-    if health_data:
-        current_config = health_data.get('configuration', {})
-    else:
-        current_config = models_data.get('current_config', {})
+    current_config = (health_data.get('configuration', {}) if health_data 
+                     else models_data.get('current_config', {}))
     
     st.subheader("🤖 Model Configuration")
     
@@ -378,13 +263,9 @@ def settings_dialog(api_client: RAGAPIClient):
         col1, col2 = st.columns(2)
         
         with col1:
-            llm_models = models_data.get('ollama', {}).get('llm_models', ['phi3', 'llama3', 'mistral', 'deepseek-r1'])
+            llm_models = models_data.get('ollama', {}).get('llm_models', ['phi3'])
             current_llm = current_config.get('model', 'phi3')
-            
-            try:
-                llm_index = llm_models.index(current_llm)
-            except ValueError:
-                llm_index = 0
+            llm_index = llm_models.index(current_llm) if current_llm in llm_models else 0
             
             llm_model = st.selectbox(
                 "LLM Model",
@@ -396,11 +277,7 @@ def settings_dialog(api_client: RAGAPIClient):
         with col2:
             embedding_models = models_data.get('ollama', {}).get('embedding_models', ['nomic-embed-text'])
             current_embedding = current_config.get('embedding_model', 'nomic-embed-text')
-            
-            try:
-                embed_index = embedding_models.index(current_embedding)
-            except ValueError:
-                embed_index = 0
+            embed_index = embedding_models.index(current_embedding) if current_embedding in embedding_models else 0
             
             embedding_model = st.selectbox(
                 "Embedding Model",
@@ -420,8 +297,7 @@ def settings_dialog(api_client: RAGAPIClient):
                 min_value=100, 
                 max_value=2000, 
                 value=current_config.get('chunk_size', 1000), 
-                step=50,
-                help="Size of text chunks for processing"
+                step=50
             )
             
             temperature = st.slider(
@@ -429,8 +305,7 @@ def settings_dialog(api_client: RAGAPIClient):
                 0.0, 
                 2.0, 
                 float(current_config.get('temperature', 0.7)), 
-                step=0.1,
-                help="Controls response randomness (0=focused, 2=creative)"
+                step=0.1
             )
         
         with col2:
@@ -439,29 +314,18 @@ def settings_dialog(api_client: RAGAPIClient):
                 min_value=0, 
                 max_value=500, 
                 value=current_config.get('chunk_overlap', 200), 
-                step=25,
-                help="Overlap between consecutive chunks"
+                step=25
             )
         
         st.markdown("---")
         
         col1, col2, col3 = st.columns([1, 1, 1])
         with col1:
-            submitted = st.form_submit_button(
-                "💾 Update Configuration", 
-                type="primary", 
-                use_container_width=True
-            )
+            submitted = st.form_submit_button("💾 Update Configuration", type="primary", use_container_width=True)
         with col2:
-            apply_and_rebuild = st.form_submit_button(
-                "💾 Update & Rebuild",
-                use_container_width=True
-            )
+            apply_and_rebuild = st.form_submit_button("💾 Update & Rebuild", use_container_width=True)
         with col3:
-            cancel = st.form_submit_button(
-                "❌ Cancel",
-                use_container_width=True
-            )
+            cancel = st.form_submit_button("❌ Cancel", use_container_width=True)
     
     if cancel:
         st.rerun()
@@ -485,27 +349,18 @@ def settings_dialog(api_client: RAGAPIClient):
             if changed_fields:
                 st.info(f"📝 Changed fields: {', '.join(changed_fields)}")
             
-            embedding_changed = 'embedding_model' in changed_fields
-            if embedding_changed:
-                st.warning("⚠️ Embedding model changed! You should rebuild vectors for existing documents.")
+            if 'embedding_model' in changed_fields:
+                st.warning("⚠️ Embedding model changed! You should rebuild vectors.")
             
             if apply_and_rebuild:
-                with st.spinner("Rebuilding vectors... This may take a while."):
+                with st.spinner("Rebuilding vectors..."):
                     rebuild_status, rebuild_response = api_client.rebuild_vectors()
                     
                     if rebuild_status == 200:
                         st.success("✅ Vectors rebuilt successfully!")
                         results = rebuild_response.get('results', {})
-                        
                         success_count = sum(1 for r in results.values() if r.get('success'))
                         st.info(f"📊 Rebuilt {success_count}/{len(results)} documents")
-                        
-                        with st.expander("View Details"):
-                            for filename, result in results.items():
-                                if result.get('success'):
-                                    st.write(f"✅ {filename}: {result.get('chunks')} chunks")
-                                else:
-                                    st.write(f"❌ {filename}: {result.get('error')}")
                     else:
                         st.error(f"❌ Rebuild failed: {rebuild_response.get('message', 'Unknown error')}")
             
@@ -528,12 +383,11 @@ def render_sidebar(api_client: RAGAPIClient):
             st.info(f"📊 {len(documents)} document(s) loaded")
         
         st.markdown("---")
-        
-        st.subheader("📁 Your Documents")
+        st.subheader("📖 Your Documents")
         
         if documents:
             for doc in documents:
-                UIComponents.render_document_card(doc, api_client)
+                render_document_card(doc, api_client)
             
             st.markdown("---")
             col1, col2 = st.columns(2)
@@ -574,8 +428,7 @@ def render_sidebar(api_client: RAGAPIClient):
             "Choose files",
             type=ALLOWED_EXTENSIONS,
             accept_multiple_files=True,
-            help=f"Supported: {', '.join(ALLOWED_EXTENSIONS).upper()} (max {MAX_FILE_SIZE_MB}MB each)",
-            key="file_uploader"
+            help=f"Supported: {', '.join(ALLOWED_EXTENSIONS).upper()} (max {MAX_FILE_SIZE_MB}MB each)"
         )
         
         if uploaded_files:
@@ -588,33 +441,6 @@ def render_sidebar(api_client: RAGAPIClient):
                 st.session_state.chat_history = []
                 st.rerun()
 
-def upload_files(files: List, api_client: RAGAPIClient):
-    """Handle file upload with progress tracking"""
-    success_count = 0
-    total_files = len(files)
-    
-    progress_bar = st.progress(0)
-    status_text = st.empty()
-    
-    for i, file in enumerate(files):
-        status_text.text(f"⏳ Uploading {file.name}...")
-        
-        status_code, response = api_client.upload_file(file)
-        
-        if status_code == 200:
-            st.success(f"✅ {file.name}: {response.get('chunks', 0)} chunks created")
-            success_count += 1
-        else:
-            st.error(f"❌ {file.name}: {response.get('message', 'Failed')}")
-        
-        progress_bar.progress((i + 1) / total_files)
-    
-    status_text.text(f"✨ Complete: {success_count}/{total_files} uploaded")
-    
-    if success_count > 0:
-        time.sleep(1.5)
-        st.rerun()
-
 # ============================================================================
 # CHAT INTERFACE
 # ============================================================================
@@ -622,35 +448,20 @@ def upload_files(files: List, api_client: RAGAPIClient):
 def render_chat_interface(api_client: RAGAPIClient, health_data: Dict):
     """Render main chat interface"""
     
-    # Check if documents exist
     if health_data and health_data.get('document_count', 0) == 0:
         st.info("👋 **Welcome!** Upload documents from the sidebar to start chatting.")
         
-        models_data = api_client.get_models()
-        llm_models = models_data.get('ollama', {}).get('llm_models', ['phi3', 'llama3', 'mistral', 'deepseek-r1'])
-    
         with st.expander("📖 Quick Start Guide", expanded=True):
             st.markdown("""
             ### Getting Started
             
-            1. **Upload Documents** 📤  
-               Click the sidebar and upload PDF, TXT, or DOCX files
-            
-            2. **Ask Questions** 💬  
-               Type your question in the chat input below
-            
-            3. **Get Answers** 🎯  
-               Receive AI-powered answers with source citations
-            
-            4. **Configure Settings** ⚙️  
-               Click the settings button to customize models and parameters
+            1. **Upload Documents** 📤 - Click the sidebar and upload PDF, TXT, or DOCX files
+            2. **Ask Questions** 💬 - Type your question in the chat input below
+            3. **Get Answers** 🎯 - Receive AI-powered answers with source citations
+            4. **Configure Settings** ⚙️ - Click the settings button to customize models
             """)
-
-            if llm_models:
-                st.markdown(f"**Available LLM Models:** {', '.join(llm_models)}")
         return
     
-    # Initialize chat history
     if 'chat_history' not in st.session_state:
         st.session_state.chat_history = []
     
@@ -660,49 +471,42 @@ def render_chat_interface(api_client: RAGAPIClient, health_data: Dict):
     else:
         st.error("✗ Ollama Unavailable")
 
-    # Display chat messages
     chat_container = st.container()
     with chat_container:
         for message in st.session_state.chat_history:
             with st.chat_message(message["role"]):
                 st.markdown(message["content"])
                 
-                if message["role"] == "assistant":
-                    if message.get("endpoint_type"):
-                        endpoint_badge = f'<span class="status-badge status-info">Endpoint: {message["endpoint_type"]}</span>'
-                        st.markdown(endpoint_badge, unsafe_allow_html=True)
+                if message["role"] == "assistant" and message.get("endpoint_type"):
+                    endpoint_badge = f'<span class="status-badge status-info">Endpoint: {message["endpoint_type"]}</span>'
+                    st.markdown(endpoint_badge, unsafe_allow_html=True)
     
-    # Chat input
-    if prompt := st.chat_input("💭 Ask your documents anything...", key="chat_input"):
+    if prompt := st.chat_input("💭 Ask your documents anything..."):
         handle_chat_input(prompt, api_client)
+
 
 def handle_chat_input(prompt: str, api_client: RAGAPIClient):
     """Handle user chat input"""
-    # Add user message
     st.session_state.chat_history.append({
         "role": "user",
         "content": prompt,
         "timestamp": datetime.now().isoformat()
     })
     
-    # Display user message
     with st.chat_message("user"):
         st.markdown(prompt)
     
-    # Get AI response with streaming
     with st.chat_message("assistant"):
         message_placeholder = st.empty()
         full_response = ""
         sources = []
         endpoint_type = None
-        model_used = None
         
         try:
             for data in api_client.query_stream(prompt):
                 if data.get('type') == 'metadata':
                     sources = data.get('sources', [])
                     endpoint_type = data.get('endpoint_type')
-                    model_used = data.get('model_used')
                 elif data.get('type') == 'content':
                     full_response += data.get('content', '')
                     message_placeholder.markdown(full_response + "▌")
@@ -713,17 +517,14 @@ def handle_chat_input(prompt: str, api_client: RAGAPIClient):
                     message_placeholder.error(error_msg)
                     full_response = error_msg
             
-            # Add to history
             st.session_state.chat_history.append({
                 "role": "assistant",
                 "content": full_response,
                 "sources": sources,
                 "endpoint_type": endpoint_type,
-                "model_used": model_used,
                 "timestamp": datetime.now().isoformat()
             })
             
-            # Show endpoint info
             if endpoint_type:
                 endpoint_badge = f'<span class="status-badge status-info">Endpoint: {endpoint_type}</span>'
                 st.markdown(endpoint_badge, unsafe_allow_html=True)
@@ -745,40 +546,26 @@ def handle_chat_input(prompt: str, api_client: RAGAPIClient):
 def main():
     """Main application entry point"""
     
-    # Page config
     st.set_page_config(
         page_title="RAG Assistant - Document Chat",
         page_icon="📚",
         layout="wide",
         initial_sidebar_state="auto",
-        menu_items={
-            'About': "# RAG Assistant\nChat with your documents using AI"
-        }
+        menu_items={'About': "# RAG Assistant\nChat with your documents using AI"}
     )
     
-    # Apply custom styling
     apply_custom_css()
-    
-    # Initialize API client
     api_client = RAGAPIClient(API_BASE_URL)
     
-    # Check backend health
     health_status, health_data = api_client.health_check()
     
     if not health_status:
         st.error("🔴 **Backend Offline**")
-        st.markdown("""
-        The RAG backend service is not running. Please start it with:
-        ```
-        python rag_backend.py
-        ```
-        """)
+        st.markdown("The RAG backend service is not running. Please start it with:\n```\npython rag_backend.py\n```")
         return
     
-    # Render sidebar
     render_sidebar(api_client)
     
-    # Main content area
     col1, col2, col3 = st.columns([6, 1, 1])
     
     with col1:
@@ -792,16 +579,15 @@ def main():
         if st.button("⚙️", help="Settings", use_container_width=True):
             settings_dialog(api_client)
     
-    # Show dashboard if toggled
     if st.session_state.get('show_dashboard', False):
         st.markdown("---")
         st.markdown("### 📊 System Dashboard")
         stats_data = api_client.get_stats()
-        UIComponents.render_metrics_dashboard(health_data, stats_data)
+        render_metrics_dashboard(health_data, stats_data)
         st.markdown("---")
     
-    # Render chat interface
     render_chat_interface(api_client, health_data)
+
 
 if __name__ == "__main__":
     main()
