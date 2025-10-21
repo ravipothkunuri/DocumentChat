@@ -10,7 +10,7 @@ from typing import List, Dict, Any, Optional, Iterator
 from contextlib import asynccontextmanager
 
 import uvicorn
-from fastapi import FastAPI, File, UploadFile, Request, HTTPException, Query
+from fastapi import FastAPI, File, UploadFile, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field, validator
@@ -51,7 +51,7 @@ class QueryRequest(BaseModel):
     model: Optional[str] = None
     top_k: int = Field(4, ge=1, le=20)
     temperature: Optional[float] = Field(None, ge=0.0, le=2.0)
-    stream: bool = Field(False)
+    stream: bool = False
 
 
 class DocumentUploadResponse(BaseModel):
@@ -102,7 +102,6 @@ class OllamaLLM:
         self.timeout = timeout
         self.base_url = base_url.rstrip('/')
         self.endpoint_type = None
-        
         logger.info(f"Initializing OllamaLLM with model: {model}")
     
     def _detect_endpoint(self) -> None:
@@ -134,9 +133,11 @@ class OllamaLLM:
         self.endpoint_type = "generate"
         logger.info(f"Model {self.model} uses /api/generate endpoint")
     
-    def _call_endpoint(self, prompt: str, stream: bool = False) -> requests.Response:
-        """Call the appropriate endpoint."""
+    def _build_payload(self, prompt: str, stream: bool) -> tuple[str, dict]:
+        """Build request payload based on endpoint type."""
         self._detect_endpoint()
+        
+        common_options = {"temperature": self.temperature}
         
         if self.endpoint_type == "chat":
             url = f"{self.base_url}/api/chat"
@@ -144,7 +145,7 @@ class OllamaLLM:
                 "model": self.model,
                 "messages": [{"role": "user", "content": prompt}],
                 "stream": stream,
-                "options": {"temperature": self.temperature}
+                "options": common_options
             }
         else:
             url = f"{self.base_url}/api/generate"
@@ -152,22 +153,25 @@ class OllamaLLM:
                 "model": self.model,
                 "prompt": prompt,
                 "stream": stream,
-                "options": {"temperature": self.temperature}
+                "options": common_options
             }
         
-        return requests.post(url, json=payload, timeout=self.timeout, stream=stream)
+        return url, payload
+    
+    def _extract_content(self, data: dict) -> str:
+        """Extract content from response based on endpoint type."""
+        if self.endpoint_type == "chat":
+            return data.get("message", {}).get("content", "")
+        return data.get("response", "")
     
     def invoke(self, prompt: str) -> str:
         """Invoke the model with a prompt."""
         try:
-            response = self._call_endpoint(prompt, stream=False)
+            url, payload = self._build_payload(prompt, stream=False)
+            response = requests.post(url, json=payload, timeout=self.timeout)
             response.raise_for_status()
-            data = response.json()
             
-            if self.endpoint_type == "chat":
-                return data.get("message", {}).get("content", "")
-            else:
-                return data.get("response", "")
+            return self._extract_content(response.json())
         
         except requests.exceptions.HTTPError as e:
             if e.response.status_code == 404:
@@ -181,18 +185,15 @@ class OllamaLLM:
     def stream(self, prompt: str) -> Iterator[str]:
         """Stream the model's response."""
         try:
-            response = self._call_endpoint(prompt, stream=True)
+            url, payload = self._build_payload(prompt, stream=True)
+            response = requests.post(url, json=payload, timeout=self.timeout, stream=True)
             response.raise_for_status()
             
             for line in response.iter_lines():
                 if line:
                     try:
                         data = json.loads(line)
-                        
-                        if self.endpoint_type == "chat":
-                            content = data.get("message", {}).get("content", "")
-                        else:
-                            content = data.get("response", "")
+                        content = self._extract_content(data)
                         
                         if content:
                             yield content
@@ -233,8 +234,7 @@ class ConfigManager:
         try:
             if self.config_file.exists():
                 with open(self.config_file, 'r') as f:
-                    loaded_config = json.load(f)
-                self.config.update(loaded_config)
+                    self.config.update(json.load(f))
                 logger.info(f"Loaded config: model={self.config['model']}")
             else:
                 logger.info("No existing config file, using defaults")
@@ -256,10 +256,9 @@ class ConfigManager:
         """Update configuration and return list of changed fields."""
         changed = []
         for key, value in kwargs.items():
-            if value is not None and key in self.config:
-                if self.config.get(key) != value:
-                    self.config[key] = value
-                    changed.append(key)
+            if value is not None and key in self.config and self.config[key] != value:
+                self.config[key] = value
+                changed.append(key)
         
         if changed:
             self.save()
@@ -368,7 +367,7 @@ class ModelManager:
         
         return self.embeddings_model
     
-    def get_llm_model(self, model_name: Optional[str] = None) -> OllamaLLM:
+    def get_llm_model(self, model_name: Optional[str] = None, temperature: Optional[float] = None) -> OllamaLLM:
         """Get or create LLM model."""
         model_to_use = model_name or self.config.get('model')
         
@@ -379,13 +378,17 @@ class ModelManager:
                 llm = OllamaLLM(
                     model=model_to_use,
                     base_url=OLLAMA_BASE_URL,
-                    temperature=self.config.get('temperature')
+                    temperature=temperature or self.config.get('temperature')
                 )
                 self.llm_cache[model_to_use] = llm
                 logger.info(f"LLM model '{model_to_use}' cached successfully")
             except Exception as e:
                 logger.error(f"Error initializing LLM model '{model_to_use}': {e}")
                 raise ValueError(f"Failed to initialize LLM model: {str(e)}")
+        
+        # Update temperature if specified
+        if temperature is not None:
+            self.llm_cache[model_to_use].temperature = temperature
         
         return self.llm_cache[model_to_use]
     
@@ -398,11 +401,6 @@ class ModelManager:
         """Reset LLM cache."""
         self.llm_cache.clear()
         logger.debug("LLM cache cleared")
-    
-    def update_temperature(self, temperature: float) -> None:
-        """Update LLM temperature for all cached models."""
-        for llm in self.llm_cache.values():
-            llm.temperature = temperature
 
 
 # Document Processor
@@ -425,8 +423,7 @@ class DocumentProcessor:
         if suffix not in self.LOADERS:
             raise ValueError(f"Unsupported file type: {suffix}")
         
-        loader_class = self.LOADERS[suffix]
-        loader = loader_class(str(file_path))
+        loader = self.LOADERS[suffix](str(file_path))
         documents = loader.load()
         content = [doc.page_content for doc in documents]
         
@@ -465,10 +462,18 @@ class DocumentProcessor:
 # Utility Functions
 def clean_llm_response(text: str) -> str:
     """Clean LLM response by removing reasoning tags."""
-    text = re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL | re.IGNORECASE)
-    text = re.sub(r'<reasoning>.*?</reasoning>', '', text, flags=re.DOTALL | re.IGNORECASE)
-    text = re.sub(r'<thought>.*?</thought>', '', text, flags=re.DOTALL | re.IGNORECASE)
-    text = re.sub(r'</?(?:think|reasoning|thought)>', '', text, flags=re.IGNORECASE)
+    # Remove thinking/reasoning tags
+    patterns = [
+        r'<think>.*?</think>',
+        r'<reasoning>.*?</reasoning>',
+        r'<thought>.*?</thought>',
+        r'</?(?:think|reasoning|thought)>'
+    ]
+    
+    for pattern in patterns:
+        text = re.sub(pattern, '', text, flags=re.DOTALL | re.IGNORECASE)
+    
+    # Clean up excessive newlines
     text = re.sub(r'\n{3,}', '\n\n', text)
     return text.strip()
 
@@ -480,27 +485,25 @@ def get_available_models() -> tuple[List[str], List[str]]:
         
         if response.status_code == 200:
             data = response.json()
-            models = [model['name'] for model in data.get('models', [])]
+            all_models = [model['name'] for model in data.get('models', [])]
             
-            embedding_models = [m for m in models if 'embed' in m.lower() or 'nomic' in m.lower()]
-            llm_models = [m for m in models if 'embed' not in m.lower()]
+            # Separate embedding and LLM models
+            embedding_models = [m for m in all_models if 'embed' in m.lower() or 'nomic' in m.lower()]
+            llm_models = [m for m in all_models if m not in embedding_models]
             
             return llm_models, embedding_models
     except Exception as e:
         logger.debug(f"API-based model detection failed: {e}")
     
+    # Fallback defaults
     return ["phi3", "llama3", "mistral", "deepseek-r1"], ["nomic-embed-text"]
 
 
-def check_ollama_available(config: ConfigManager) -> tuple[bool, str]:
+def check_ollama_health() -> tuple[bool, str]:
     """Check if Ollama is available."""
     try:
         response = requests.get(f"{OLLAMA_BASE_URL}/api/tags", timeout=5)
-        
-        if response.status_code != 200:
-            return False, "Ollama server not responding"
-        
-        return True, f"Ollama available with {config.get('embedding_model')} and {config.get('model')}"
+        return response.status_code == 200, "Ollama available" if response.status_code == 200 else "Ollama not responding"
     except Exception as e:
         return False, f"Connection error: {str(e)}"
 
@@ -577,7 +580,7 @@ app.add_middleware(
 async def health_check():
     """Check system health and configuration."""
     try:
-        ollama_available, ollama_message = check_ollama_available(config_manager)
+        ollama_available, ollama_message = check_ollama_health()
         stats = vector_store.get_stats()
         
         return {
@@ -626,15 +629,18 @@ async def upload_document(file: UploadFile = File(...)):
     file_path = UPLOAD_DIR / file.filename
     
     try:
+        # Save file
         with open(file_path, 'wb') as f:
             f.write(content)
         
+        # Load and process document
         document_content = document_processor.load_document(file_path)
         documents = document_processor.split_text(document_content, file.filename)
         
         if not documents:
             raise ValueError("No content extracted from document")
         
+        # Generate embeddings
         embeddings_model = model_manager.get_embeddings_model()
         texts = [doc["page_content"] for doc in documents]
         embeddings = embeddings_model.embed_documents(texts)
@@ -642,8 +648,10 @@ async def upload_document(file: UploadFile = File(...)):
         if not embeddings or len(embeddings) != len(documents):
             raise ValueError("Failed to generate embeddings")
         
+        # Add to vector store
         vector_store.add_documents(documents, embeddings)
         
+        # Save metadata
         metadata_manager.add(file.filename, {
             "filename": file.filename,
             "size": file_size,
@@ -668,6 +676,7 @@ async def upload_document(file: UploadFile = File(...)):
         logger.error(f"Error processing upload {file.filename}: {e}")
         logger.debug(traceback.format_exc())
         
+        # Cleanup on error
         if file_path.exists():
             file_path.unlink()
         metadata_manager.remove(file.filename)
@@ -677,27 +686,20 @@ async def upload_document(file: UploadFile = File(...)):
 
 @app.post("/query", tags=["Query"])
 async def query_documents(request: Request, query: QueryRequest):
-    """Query the document collection with client disconnect handling."""
-    logger.info(f"Query request: '{query.question[:50]}...' with model {query.model or config_manager.get('model')}")
+    """Query the document collection with streaming support."""
+    logger.info(f"Query: '{query.question[:50]}...' model: {query.model or config_manager.get('model')}")
     start_time = datetime.now()
     
     try:
         # Validate documents exist
-        stats = vector_store.get_stats()
-        if stats.get("total_chunks", 0) == 0:
-            raise HTTPException(
-                status_code=400,
-                detail="No documents available. Please upload documents first."
-            )
+        if vector_store.get_stats().get("total_chunks", 0) == 0:
+            raise HTTPException(status_code=400, detail="No documents available. Upload documents first.")
         
-        # Get embeddings model
+        # Generate query embedding and search
         embeddings_model = model_manager.get_embeddings_model()
-        
-        # Generate query embedding
         query_embedding = embeddings_model.embed_query(query.question)
-        
-        # Search similar documents
         similar_docs = vector_store.similarity_search(query_embedding, k=query.top_k)
+        
         if not similar_docs:
             raise HTTPException(status_code=400, detail="No relevant documents found")
         
@@ -705,16 +707,16 @@ async def query_documents(request: Request, query: QueryRequest):
         context_parts = []
         sources = []
         similarity_scores = []
+        
         for doc, score in similar_docs:
             context_parts.append(f"Source: {doc['metadata']['source']}\nContent: {doc['page_content']}")
             sources.append(doc['metadata']['source'])
             similarity_scores.append(float(score))
+        
         context = "\n\n".join(context_parts)
         
         # Get LLM
-        llm = model_manager.get_llm_model(query.model)
-        if query.temperature is not None:
-            llm.temperature = query.temperature
+        llm = model_manager.get_llm_model(query.model, query.temperature)
         
         # Build prompt
         unique_sources = list(set(sources))
@@ -728,10 +730,11 @@ The user asks: {query.question}
 
 Respond naturally as the document. Your response:"""
         
-        # Streaming or regular response
+        # Handle streaming
         if query.stream:
             async def generate():
                 try:
+                    # Send metadata first
                     metadata = {
                         "sources": sources,
                         "chunks_used": len(similar_docs),
@@ -742,6 +745,7 @@ Respond naturally as the document. Your response:"""
                     }
                     yield f"data: {json.dumps(metadata)}\n\n"
 
+                    # Stream content
                     for chunk in llm.stream(prompt):
                         if await request.is_disconnected():
                             logger.info("Client disconnected, stopping stream")
@@ -749,18 +753,20 @@ Respond naturally as the document. Your response:"""
                         if chunk:
                             yield f"data: {json.dumps({'type': 'content', 'content': chunk})}\n\n"
 
+                    # Send completion
                     processing_time = (datetime.now() - start_time).total_seconds()
                     completion = {"type": "done", "processing_time": processing_time}
                     yield f"data: {json.dumps(completion)}\n\n"
+                    
                     config_manager.increment_queries()
                     logger.info(f"Streaming query completed in {processing_time:.2f}s")
                 except Exception as e:
                     logger.error(f"Streaming error: {e}")
-                    error_msg = {"type": "error", "error": str(e)}
-                    yield f"data: {json.dumps(error_msg)}\n\n"
+                    yield f"data: {json.dumps({'type': 'error', 'error': str(e)})}\n\n"
             
             return StreamingResponse(generate(), media_type="text/event-stream")
         else:
+            # Non-streaming response
             answer = llm.invoke(prompt)
             answer = clean_llm_response(answer)
             
@@ -795,7 +801,7 @@ async def list_documents():
 @app.delete("/documents/{filename}", tags=["Documents"])
 async def delete_document(filename: str):
     """Delete a specific document."""
-    logger.info(f"Delete request for document: {filename}")
+    logger.info(f"Delete request for: {filename}")
     
     if not metadata_manager.exists(filename):
         raise HTTPException(status_code=404, detail=f"Document '{filename}' not found")
@@ -810,10 +816,10 @@ async def delete_document(filename: str):
         
         vector_store.save()
         
-        logger.info(f"Successfully deleted document: {filename}")
+        logger.info(f"Successfully deleted: {filename}")
         return {"message": f"Document '{filename}' deleted successfully"}
     except Exception as e:
-        logger.error(f"Error deleting document {filename}: {e}")
+        logger.error(f"Error deleting {filename}: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to delete document: {str(e)}")
 
 
@@ -842,23 +848,24 @@ async def clear_all_documents():
 @app.post("/configure", tags=["Configuration"])
 async def configure_system(config_update: ModelConfig):
     """Update system configuration."""
-    logger.info(f"Configuration update request: {config_update.dict(exclude_none=True)}")
+    logger.info(f"Configuration update: {config_update.dict(exclude_none=True)}")
     
     try:
         changed_fields = config_manager.update(**config_update.dict(exclude_none=True))
         
+        # Reset models if changed
         if "model" in changed_fields:
             model_manager.reset_llm_cache()
         
         if "embedding_model" in changed_fields:
             model_manager.reset_embeddings_model()
         
-        if "temperature" in changed_fields:
-            model_manager.update_temperature(config_manager.get('temperature'))
+        logger.info(f"Configuration updated: {changed_fields}")
         
-        logger.info(f"Configuration updated, changed: {changed_fields}")
-        
-        response = {"message": "Configuration updated successfully", "changed_fields": changed_fields}
+        response = {
+            "message": "Configuration updated successfully",
+            "changed_fields": changed_fields
+        }
         
         if "embedding_model" in changed_fields:
             response["warning"] = "Embedding model changed. Consider rebuilding vectors."
@@ -908,9 +915,8 @@ async def get_statistics():
     
     try:
         stats = vector_store.get_stats()
-        
-        total_size = sum(meta.get('size', 0) for meta in metadata_manager.metadata.values())
         doc_count = len(metadata_manager.metadata)
+        total_size = sum(meta.get('size', 0) for meta in metadata_manager.metadata.values())
         avg_chunks = stats.get('total_chunks', 0) / max(1, doc_count)
         
         return {
@@ -920,7 +926,7 @@ async def get_statistics():
             "total_storage_size": total_size,
             "average_chunks_per_document": round(avg_chunks, 2),
             "last_update": stats.get('last_update'),
-            "vector_store_size_mb": stats.get('vector_store_size', 0) / (1024 * 1024) if stats.get('vector_store_size') else 0
+            "vector_store_size_mb": round(stats.get('vector_store_size', 0) / (1024 * 1024), 2)
         }
     except Exception as e:
         logger.error(f"Error getting statistics: {e}")
@@ -941,6 +947,7 @@ async def rebuild_vectors():
     try:
         vector_store.clear()
         results = {}
+        embeddings_model = model_manager.get_embeddings_model()
         
         for filename in list(metadata_manager.metadata.keys()):
             try:
@@ -951,15 +958,18 @@ async def rebuild_vectors():
                     results[filename] = {"success": False, "error": "File not found"}
                     continue
                 
+                # Load and process document
                 document_content = document_processor.load_document(file_path)
                 documents = document_processor.split_text(document_content, filename)
                 
-                embeddings_model = model_manager.get_embeddings_model()
+                # Generate embeddings
                 texts = [doc["page_content"] for doc in documents]
                 embeddings = embeddings_model.embed_documents(texts)
                 
+                # Add to vector store
                 vector_store.add_documents(documents, embeddings)
                 
+                # Update metadata
                 metadata = metadata_manager.get(filename) or {}
                 metadata["chunks"] = len(documents)
                 metadata_manager.add(filename, metadata)
@@ -974,7 +984,7 @@ async def rebuild_vectors():
         
         success_count = sum(1 for result in results.values() if result["success"])
         
-        logger.info(f"Rebuild completed: {success_count}/{len(results)} documents successful")
+        logger.info(f"Rebuild completed: {success_count}/{len(results)} successful")
         
         return {
             "message": f"Rebuild completed: {success_count}/{len(results)} documents processed",
