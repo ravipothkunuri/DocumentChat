@@ -79,6 +79,35 @@ def apply_custom_css():
         transform: scale(1.05);
     }
     
+    /* Inline stop button - Next to generating message */
+    button[key="stop_inline"] {
+        background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%) !important;
+        color: white !important;
+        border: none !important;
+        border-radius: 8px !important;
+        font-size: 1.5rem !important;
+        min-height: 45px !important;
+        padding: 0 !important;
+        transition: all 0.3s ease !important;
+        box-shadow: 0 2px 8px rgba(239, 68, 68, 0.3) !important;
+        animation: pulse-stop 2s infinite !important;
+    }
+    
+    button[key="stop_inline"]:hover {
+        background: linear-gradient(135deg, #dc2626 0%, #b91c1c 100%) !important;
+        transform: scale(1.1) !important;
+        box-shadow: 0 4px 12px rgba(239, 68, 68, 0.5) !important;
+    }
+    
+    @keyframes pulse-stop {
+        0%, 100% { 
+            box-shadow: 0 2px 8px rgba(239, 68, 68, 0.3);
+        }
+        50% { 
+            box-shadow: 0 4px 12px rgba(239, 68, 68, 0.5);
+        }
+    }
+    
     /* Pulse animation for status indicator */
     @keyframes pulse {
         0%, 100% {
