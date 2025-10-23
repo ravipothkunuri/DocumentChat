@@ -216,40 +216,9 @@ def apply_custom_css():
         transform: scale(1.05);
     }
     
-    /* Stop button styling */
-    button[key="stop_generation_btn"] {
-        background: rgba(239, 68, 68, 0.15) !important;
-        border: 2px solid #ef4444 !important;
-        color: #ef4444 !important;
-        font-weight: 600 !important;
-        animation: pulse-red 2s ease-in-out infinite;
-    }
-    
-    button[key="stop_generation_btn"]:hover {
-        background: rgba(239, 68, 68, 0.25) !important;
-        border-color: #dc2626 !important;
-        color: #dc2626 !important;
-        transform: scale(1.02);
-    }
-    
-    @keyframes pulse-red {
-        0%, 100% {
-            box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.4);
-        }
-        50% {
-            box-shadow: 0 0 0 8px rgba(239, 68, 68, 0);
-        }
-    }
-    
     /* Chat input styling */
     .stChatInput > div {
         border-radius: 12px;
-    }
-    
-    /* Chat input container */
-    .chat-input-container {
-        position: relative;
-        margin-top: 1rem;
     }
     
     /* Loading animation */
@@ -287,33 +256,6 @@ def apply_custom_css():
         }
     }
     
-    /* Generation indicator */
-    .generation-indicator {
-        display: flex;
-        align-items: center;
-        gap: 8px;
-        padding: 8px 16px;
-        background: rgba(102, 126, 234, 0.1);
-        border-radius: 8px;
-        margin-bottom: 12px;
-        font-size: 0.9rem;
-        color: #667eea;
-        font-weight: 500;
-    }
-    
-    .generation-indicator .spinner {
-        width: 16px;
-        height: 16px;
-        border: 2px solid rgba(102, 126, 234, 0.3);
-        border-top-color: #667eea;
-        border-radius: 50%;
-        animation: spin 1s linear infinite;
-    }
-    
-    @keyframes spin {
-        to { transform: rotate(360deg); }
-    }
-    
     /* Responsive design */
     @media screen and (max-width: 768px) {
         .main-header { 
@@ -346,7 +288,8 @@ def init_session_state():
         'last_uploaded_files': [],
         'is_generating': False,
         'stop_generation': False,
-        'current_generation_id': None
+        'pending_query': None,
+        'pending_model': None
     }
     for key, value in defaults.items():
         if key not in st.session_state:
@@ -497,6 +440,14 @@ def render_sidebar(api_client: RAGAPIClient):
 # CHAT INTERFACE
 # ============================================================================
 
+def handle_stop_generation():
+    """Callback for stop button"""
+    st.session_state.stop_generation = True
+    st.session_state.is_generating = False
+    st.session_state.pending_query = None
+    st.session_state.pending_model = None
+    ToastNotification.show("Generation stopped", "info")
+
 def render_chat(api_client: RAGAPIClient, health_data: Dict, model: str):
     """Render chat interface"""
     
@@ -527,137 +478,111 @@ def render_chat(api_client: RAGAPIClient, health_data: Dict, model: str):
             if msg.get("stopped"):
                 st.caption("⚠️ Generation was stopped")
     
-    # If generating, show response in real-time
-    if st.session_state.is_generating:
-        # Get the pending question from the last user message
-        chat_history = get_current_chat()
-        if chat_history and chat_history[-1]["role"] == "user":
-            prompt = chat_history[-1]["content"]
-            
-            # Show user message
-            with st.chat_message("user"):
-                st.markdown(prompt)
-            
-            # Generate assistant response
-            with st.chat_message("assistant"):
-                placeholder = st.empty()
-                placeholder.markdown(
-                    '<div class="loading-dots"><div class="dot"></div><div class="dot"></div><div class="dot"></div></div>',
-                    unsafe_allow_html=True
-                )
-                
-                response = ""
-                sources = []
-                stopped = False
-                generation_id = st.session_state.current_generation_id
-                
-                try:
-                    for data in api_client.query_stream(prompt, model=model):
-                        # Check for stop signal
-                        if st.session_state.stop_generation:
-                            stopped = True
-                            if response:
-                                response += "\n\n*[Generation stopped by user]*"
-                            else:
-                                response = "*[Generation stopped before content was generated]*"
-                            placeholder.markdown(response)
-                            break
-                        
-                        if data.get('type') == 'metadata':
-                            sources = data.get('sources', [])
-                        elif data.get('type') == 'content':
-                            response += data.get('content', '')
-                            # Show typing cursor
-                            placeholder.markdown(response + "▌")
-                        elif data.get('type') == 'done':
-                            placeholder.markdown(response)
-                        elif data.get('type') == 'error':
-                            error = f"❌ Error: {data.get('message', 'Unknown')}"
-                            placeholder.error(error)
-                            response = error
-                    
-                    # Final rendering without cursor
-                    if response and not stopped:
-                        placeholder.markdown(response)
-                    
-                    # Add message to chat history
-                    add_message({
-                        "role": "assistant",
-                        "content": response if response else "*[No response generated]*",
-                        "sources": sources,
-                        "timestamp": datetime.now().isoformat(),
-                        "stopped": stopped,
-                        "generation_id": generation_id
-                    })
-                    
-                    if stopped:
-                        ToastNotification.show("Generation stopped successfully", "info")
-                
-                except Exception as e:
-                    error = f"❌ Error: {str(e)}"
-                    placeholder.error(error)
-                    add_message({
-                        "role": "assistant",
-                        "content": error,
-                        "sources": [],
-                        "timestamp": datetime.now().isoformat(),
-                        "generation_id": generation_id
-                    })
-                    ToastNotification.show(f"Error: {str(e)}", "error")
-                
-                finally:
-                    # Reset generation state and rerun to show send button again
-                    st.session_state.is_generating = False
-                    st.session_state.stop_generation = False
-                    st.session_state.current_generation_id = None
-                    st.rerun()
-    
-    # Input area - Show stop button during generation, chat input otherwise
-    if st.session_state.is_generating:
-        # Generation indicator
-        st.markdown(
-            '<div class="generation-indicator">'
-            '<div class="spinner"></div>'
-            '<span>Generating response...</span>'
-            '</div>',
-            unsafe_allow_html=True
-        )
+    # Process pending query if exists
+    if st.session_state.pending_query and st.session_state.is_generating:
+        prompt = st.session_state.pending_query
+        model_to_use = st.session_state.pending_model or model
         
-        # Stop button replaces chat input
+        # Display user message
+        with st.chat_message("user"):
+            st.markdown(prompt)
+        
+        # Generate response
+        with st.chat_message("assistant"):
+            response_placeholder = st.empty()
+            response_placeholder.markdown(
+                '<div class="loading-dots"><div class="dot"></div><div class="dot"></div><div class="dot"></div></div>',
+                unsafe_allow_html=True
+            )
+            
+            response = ""
+            sources = []
+            stopped = False
+            
+            try:
+                for data in api_client.query_stream(prompt, model=model_to_use):
+                    # Check for stop signal
+                    if st.session_state.stop_generation:
+                        stopped = True
+                        if response:
+                            response += "\n\n*[Generation stopped by user]*"
+                        else:
+                            response = "*[Generation stopped before content was generated]*"
+                        response_placeholder.markdown(response)
+                        break
+                    
+                    if data.get('type') == 'metadata':
+                        sources = data.get('sources', [])
+                    elif data.get('type') == 'content':
+                        response += data.get('content', '')
+                        response_placeholder.markdown(response + "▌")
+                    elif data.get('type') == 'done':
+                        response_placeholder.markdown(response)
+                    elif data.get('type') == 'error':
+                        error = f"❌ Error: {data.get('message', 'Unknown')}"
+                        response_placeholder.error(error)
+                        response = error
+                
+                # Final rendering
+                if response:
+                    response_placeholder.markdown(response)
+                
+                # Add to chat history
+                add_message({
+                    "role": "assistant",
+                    "content": response if response else "*[No response generated]*",
+                    "sources": sources,
+                    "timestamp": datetime.now().isoformat(),
+                    "stopped": stopped
+                })
+            
+            except Exception as e:
+                error = f"❌ Error: {str(e)}"
+                response_placeholder.error(error)
+                add_message({
+                    "role": "assistant",
+                    "content": error,
+                    "sources": [],
+                    "timestamp": datetime.now().isoformat()
+                })
+                ToastNotification.show(f"Error: {str(e)}", "error")
+            
+            finally:
+                # Clear pending query and reset state
+                st.session_state.pending_query = None
+                st.session_state.pending_model = None
+                st.session_state.is_generating = False
+                st.session_state.stop_generation = False
+                st.rerun()
+    
+    # Chat input area - conditional rendering
+    if st.session_state.is_generating:
+        # Show stop button
         if st.button(
             "🛑 Stop Generation",
-            key="stop_generation_btn",
+            key="stop_btn",
             use_container_width=True,
-            type="secondary"
+            type="secondary",
+            on_click=handle_stop_generation
         ):
-            st.session_state.stop_generation = True
-            ToastNotification.show("Stopping generation...", "info")
-            st.rerun()
+            pass  # Handler is in on_click
     else:
-        # Regular chat input (send button)
+        # Show chat input (send button)
         if prompt := st.chat_input(
             f"💭 Ask about {st.session_state.selected_document}...",
             key="chat_input"
         ):
-            # Start generation
-            st.session_state.stop_generation = False
+            # Store query and start generation
+            add_message({
+                "role": "user",
+                "content": prompt,
+                "timestamp": datetime.now().isoformat()
+            })
+            st.session_state.pending_query = prompt
+            st.session_state.pending_model = model
             st.session_state.is_generating = True
-            st.session_state.current_generation_id = datetime.now().isoformat()
-            handle_query(prompt, api_client, model)
-
-def handle_query(prompt: str, api_client: RAGAPIClient, model: str):
-    """Handle chat query with stop capability"""
-    generation_id = st.session_state.current_generation_id
-    
-    # Add user message
-    add_message({
-        "role": "user",
-        "content": prompt,
-        "timestamp": datetime.now().isoformat()
-    })
-    
-    # Display user message immediately
-    st.rerun()
+            st.session_state.stop_generation = False
+            st.rerun()
 
 # ============================================================================
 # MAIN
