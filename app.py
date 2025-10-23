@@ -104,7 +104,7 @@ class RAGAPIClient:
 # ============================================================================
 
 class ToastNotification:
-    """Independent toast notification system"""
+    """Independent toast notification system with session state persistence"""
     
     COLORS = {
         "success": ("#d4edda", "#155724", "#28a745"),
@@ -115,19 +115,37 @@ class ToastNotification:
     
     @staticmethod
     def show(message: str, toast_type: str = "info"):
-        """Display toast notification on right side of app"""
-        bg_color, text_color, border_color = ToastNotification.COLORS.get(
-            toast_type, ToastNotification.COLORS["info"]
-        )
+        """Queue a toast notification to be displayed"""
+        if 'toast_queue' not in st.session_state:
+            st.session_state.toast_queue = []
         
-        # Create unique container to prevent conflicts
-        toast_container = st.container()
+        # Add toast to queue with timestamp to make it unique
+        st.session_state.toast_queue.append({
+            'message': message,
+            'type': toast_type,
+            'id': f"{time.time()}_{id(message)}"
+        })
+    
+    @staticmethod
+    def render_all():
+        """Render all queued toasts"""
+        if 'toast_queue' not in st.session_state or not st.session_state.toast_queue:
+            return
         
-        with toast_container:
-            st.markdown(f"""
-                <div id="toast-{id(message)}" style="
+        toasts_html = ""
+        
+        for i, toast in enumerate(st.session_state.toast_queue):
+            bg_color, text_color, border_color = ToastNotification.COLORS.get(
+                toast['type'], ToastNotification.COLORS["info"]
+            )
+            
+            # Stack toasts vertically with offset
+            top_position = 80 + (i * 80)
+            
+            toasts_html += f"""
+                <div id="toast-{toast['id']}" style="
                     position: fixed;
-                    top: 80px;
+                    top: {top_position}px;
                     right: 20px;
                     background: {bg_color};
                     color: {text_color};
@@ -141,32 +159,47 @@ class ToastNotification:
                     font-weight: 500;
                     animation: slideIn 0.3s ease-out;
                 ">
-                    {message}
+                    {toast['message']}
                 </div>
-                <style>
-                    @keyframes slideIn {{
-                        from {{
-                            transform: translateX(400px);
-                            opacity: 0;
-                        }}
-                        to {{
-                            transform: translateX(0);
-                            opacity: 1;
-                        }}
+            """
+        
+        st.markdown(f"""
+            {toasts_html}
+            <style>
+                @keyframes slideIn {{
+                    from {{
+                        transform: translateX(400px);
+                        opacity: 0;
                     }}
-                </style>
-                <script>
+                    to {{
+                        transform: translateX(0);
+                        opacity: 1;
+                    }}
+                }}
+                @keyframes slideOut {{
+                    from {{
+                        transform: translateX(0);
+                        opacity: 1;
+                    }}
+                    to {{
+                        transform: translateX(400px);
+                        opacity: 0;
+                    }}
+                }}
+            </style>
+            <script>
+                // Auto-dismiss all toasts after 3 seconds
+                document.querySelectorAll('[id^="toast-"]').forEach(function(toast) {{
                     setTimeout(function() {{
-                        var toast = document.getElementById('toast-{id(message)}');
-                        if (toast) {{
-                            toast.style.animation = 'slideOut 0.3s ease-in';
-                            toast.style.transform = 'translateX(400px)';
-                            toast.style.opacity = '0';
-                            setTimeout(() => toast.remove(), 300);
-                        }}
+                        toast.style.animation = 'slideOut 0.3s ease-in';
+                        setTimeout(() => toast.remove(), 300);
                     }}, 3000);
-                </script>
-            """, unsafe_allow_html=True)
+                }});
+            </script>
+        """, unsafe_allow_html=True)
+        
+        # Clear the queue after rendering
+        st.session_state.toast_queue = []
 
 # ============================================================================
 # UI STYLING
@@ -314,7 +347,8 @@ def init_session_state():
     defaults = {
         'document_chats': {},
         'selected_document': None,
-        'uploader_key': 0
+        'uploader_key': 0,
+        'toast_queue': []
     }
     for key, value in defaults.items():
         if key not in st.session_state:
@@ -376,7 +410,6 @@ def render_document_card(doc: Dict, api_client: RAGAPIClient):
                     st.session_state.selected_document = None
                 
                 ToastNotification.show(f"✅ Deleted {doc_name}", "success")
-                time.sleep(0.3)
                 st.rerun()
             else:
                 ToastNotification.show(f"❌ {response.get('message', 'Delete failed')}", "error")
@@ -412,7 +445,6 @@ def upload_files(files: List, api_client: RAGAPIClient):
         st.session_state.selected_document = uploaded_names[0]
     
     st.session_state.uploader_key += 1
-    time.sleep(0.5)
     st.rerun()
 
 # ============================================================================
@@ -559,6 +591,10 @@ def main():
     
     apply_custom_css()
     init_session_state()
+    
+    # Render toasts at the very beginning
+    ToastNotification.render_all()
+    
     api_client = RAGAPIClient(API_BASE_URL)
     
     health_ok, health_data = api_client.health_check()
