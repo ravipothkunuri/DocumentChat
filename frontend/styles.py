@@ -1,5 +1,5 @@
 """
-Enhanced custom CSS styling with new component styles
+Enhanced custom CSS styling with fixed sidebar behavior
 """
 import streamlit as st
 
@@ -18,25 +18,6 @@ def apply_custom_css():
         text-align: center;
         margin-bottom: 1rem;
         padding: 0.5rem 0;
-    }
-    
-    /* Sidebar collapse button - Fixed positioning */
-    button[kind="header"] {
-        position: fixed !important;
-        top: 0.5rem !important;
-        left: 0.5rem !important;
-        z-index: 999999 !important;
-        background: rgba(102, 126, 234, 0.1) !important;
-        border: 2px solid rgba(102, 126, 234, 0.3) !important;
-        border-radius: 8px !important;
-        padding: 0.5rem !important;
-        transition: all 0.3s ease !important;
-    }
-    
-    button[kind="header"]:hover {
-        background: rgba(102, 126, 234, 0.2) !important;
-        border-color: rgba(102, 126, 234, 0.5) !important;
-        transform: scale(1.05) !important;
     }
     
     /* Enhanced button styling */
@@ -82,45 +63,25 @@ def apply_custom_css():
         box-shadow: 0 4px 12px rgba(102, 126, 234, 0.2) !important;
     }
     
-    /* Preview button */
-    button[key^="preview_"] {
+    /* Info button */
+    button[key^="info_"] {
         background: rgba(59, 130, 246, 0.1) !important;
         border: 2px solid rgba(59, 130, 246, 0.3) !important;
         color: #3b82f6 !important;
         font-size: 1.1rem !important;
+        padding: 0 !important;
+        min-height: 40px !important;
+        max-height: 40px !important;
+        width: 45px !important;
     }
     
-    button[key^="preview_"]:hover {
+    button[key^="info_"]:hover {
         background: rgba(59, 130, 246, 0.2) !important;
         border-color: #3b82f6 !important;
     }
     
-    /* Sidebar - Fixed width with smooth transitions */
-    section[data-testid="stSidebar"] {
-        width: 320px !important;
-        min-width: 320px !important;
-        max-width: 320px !important;
-        transition: all 0.3s ease-in-out !important;
-    }
-    
-    section[data-testid="stSidebar"] > div {
-        width: 320px !important;
-        padding-top: 4rem !important;
-    }
-    
-    /* Collapsed sidebar adjustments */
-    section[data-testid="stSidebar"][aria-expanded="false"] {
-        width: 0 !important;
-        min-width: 0 !important;
-    }
-    
-    /* Main content area adjustment */
-    .main .block-container {
-        transition: padding-left 0.3s ease-in-out !important;
-    }
-    
-    /* Delete button - Centered */
-    button[key*="delete_"] {
+    /* Delete button - Compact */
+    button[key*="delete_"], button[key*="del_conv_"] {
         background: rgba(239, 68, 68, 0.1) !important;
         border: 2px solid rgba(239, 68, 68, 0.5) !important;
         color: #ef4444 !important;
@@ -130,12 +91,9 @@ def apply_custom_css():
         min-height: 40px !important;
         max-height: 40px !important;
         width: 45px !important;
-        display: flex !important;
-        align-items: center !important;
-        justify-content: center !important;
     }
     
-    button[key*="delete_"]:hover {
+    button[key*="delete_"]:hover, button[key*="del_conv_"]:hover {
         background: rgba(239, 68, 68, 0.2) !important;
         border-color: #ef4444 !important;
         color: #dc2626 !important;
@@ -202,13 +160,6 @@ def apply_custom_css():
         padding: 1rem !important;
     }
     
-    /* Metrics styling */
-    [data-testid="stMetricValue"] {
-        font-size: 1.5rem !important;
-        font-weight: 700 !important;
-        color: #667eea !important;
-    }
-    
     /* Tab styling */
     .stTabs [data-baseweb="tab-list"] {
         gap: 8px;
@@ -232,24 +183,6 @@ def apply_custom_css():
         white-space: pre-line !important;
         font-size: 0.85rem !important;
         min-height: 60px !important;
-    }
-    
-    button[key^="del_conv_"] {
-        background: rgba(239, 68, 68, 0.1) !important;
-        border: 2px solid rgba(239, 68, 68, 0.3) !important;
-        color: #ef4444 !important;
-    }
-    
-    /* Pulse animation */
-    @keyframes pulse {
-        0%, 100% {
-            opacity: 1;
-            transform: scale(1);
-        }
-        50% {
-            opacity: 0.5;
-            transform: scale(1.1);
-        }
     }
     
     /* Loading animation */
@@ -319,15 +252,6 @@ def apply_custom_css():
         .stButton button { 
             width: 100% !important; 
             min-height: 44px !important; 
-        }
-        
-        section[data-testid="stSidebar"] {
-            width: 280px !important;
-            min-width: 280px !important;
-        }
-        
-        section[data-testid="stSidebar"] > div {
-            width: 280px !important;
         }
     }
     
