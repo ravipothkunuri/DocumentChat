@@ -1,19 +1,42 @@
 """
-Sidebar components for document management
+Enhanced sidebar with document preview and conversation history
 """
 import streamlit as st
 from typing import List, Dict
 from toast import ToastNotification
-from session_state import get_current_chat, clear_chat
+from session_state import (
+    get_current_chat, clear_chat, load_conversation, 
+    delete_conversation
+)
 from config import ALLOWED_EXTENSIONS, MAX_FILE_SIZE_MB, DEFAULT_LLM_MODEL
+from datetime import datetime
+
+
+def render_document_preview(doc: Dict, api_client):
+    """Render document preview modal"""
+    if st.session_state.show_document_preview == doc['filename']:
+        with st.expander(f"📄 Preview: {doc['filename']}", expanded=True):
+            st.markdown(f"""
+            **Filename:** {doc['filename']}  
+            **Size:** {doc['size']:,} bytes ({doc['size'] / 1024:.1f} KB)  
+            **Type:** {doc['type'].upper()}  
+            **Chunks:** {doc['chunks']}  
+            **Uploaded:** {datetime.fromisoformat(doc['uploaded_at']).strftime('%Y-%m-%d %H:%M')}
+            """)
+            
+            st.info("💡 Full content preview would require fetching document chunks from the backend.")
+            
+            if st.button("✕ Close Preview", use_container_width=True):
+                st.session_state.show_document_preview = None
+                st.rerun()
 
 
 def render_document_card(doc: Dict, api_client):
-    """Render document card with selection and delete"""
+    """Render enhanced document card"""
     doc_name = doc['filename']
     is_selected = st.session_state.selected_document == doc_name
     
-    col1, col2 = st.columns([5, 1])
+    col1, col2, col3 = st.columns([4, 1, 1])
     
     with col1:
         if st.button(
@@ -27,6 +50,14 @@ def render_document_card(doc: Dict, api_client):
             st.rerun()
     
     with col2:
+        if st.button("👁️", key=f"preview_{doc_name}",
+                   help="Preview document",
+                   type="secondary",
+                   disabled=st.session_state.is_generating):
+            st.session_state.show_document_preview = doc_name
+            st.rerun()
+    
+    with col3:
         if st.button("✕", key=f"delete_{doc_name}", 
                    help="Delete document",
                    type="secondary",
@@ -49,6 +80,48 @@ def render_document_card(doc: Dict, api_client):
             msg_count = len(st.session_state.document_chats[doc_name])
             if msg_count > 0:
                 st.caption(f"💬 {msg_count} messages")
+    
+    # Show preview if requested
+    if st.session_state.show_document_preview == doc_name:
+        render_document_preview(doc, api_client)
+
+
+def render_conversation_history():
+    """Render conversation history sidebar"""
+    if not st.session_state.conversation_history:
+        st.info("💬 No saved conversations yet")
+        return
+    
+    st.subheader(f"💬 History ({len(st.session_state.conversation_history)})")
+    
+    for conv in st.session_state.conversation_history:
+        is_current = st.session_state.selected_conversation == conv['id']
+        
+        with st.container():
+            col1, col2 = st.columns([4, 1])
+            
+            with col1:
+                dt = datetime.fromisoformat(conv['timestamp'])
+                time_str = dt.strftime('%m/%d %H:%M')
+                
+                if st.button(
+                    f"{'📘' if is_current else '📄'} {conv['title']}\n{time_str} • {conv['document']}",
+                    key=f"conv_{conv['id']}",
+                    use_container_width=True,
+                    type="primary" if is_current else "secondary"
+                ):
+                    load_conversation(conv['id'])
+                    st.rerun()
+            
+            with col2:
+                if st.button("🗑️", key=f"del_conv_{conv['id']}", help="Delete"):
+                    delete_conversation(conv['id'])
+                    if st.session_state.selected_conversation == conv['id']:
+                        st.session_state.selected_conversation = None
+                    ToastNotification.show("Conversation deleted", "success")
+                    st.rerun()
+            
+            st.markdown("---")
 
 
 def upload_files(files: List, api_client):
@@ -80,19 +153,14 @@ def render_model_selector(api_client):
     """Render model selection dropdown"""
     st.subheader("🤖 Model Settings")
     
-    # Get available models
     models_data = api_client.get_models()
-    
-    # Get current configuration
     current_config = models_data.get('current_config', {})
     ollama_models = models_data.get('ollama', {})
     
-    # LLM Model selection
     llm_models = ollama_models.get('llm_models', [DEFAULT_LLM_MODEL])
     current_model = st.session_state.get('current_model', 
                                          current_config.get('model', DEFAULT_LLM_MODEL))
     
-    # Ensure current model is in the list
     if current_model not in llm_models and llm_models:
         current_model = llm_models[0]
     
@@ -105,61 +173,63 @@ def render_model_selector(api_client):
         key="model_selector"
     )
     
-    # Update session state if changed
     if selected_model != st.session_state.get('current_model'):
         st.session_state.current_model = selected_model
         ToastNotification.show(f"Model changed to {selected_model}", "success")
         st.rerun()
     
-    # Embedding Model info (read-only)
     embedding_model = current_config.get('embedding_model', 'nomic-embed-text')
-    st.caption(f"🔢 Embedding: **{embedding_model}**")
+    st.caption(f"📢 Embedding: **{embedding_model}**")
 
 
 def render_sidebar(api_client):
-    """Render sidebar"""
-    with st.sidebar:        
-        documents = api_client.get_documents()
-        if documents:
-            st.info(f"📊 {len(documents)} document(s) loaded")
-        st.subheader("📖 Your Documents")
+    """Render enhanced sidebar"""
+    with st.sidebar:
+        # Toggle between documents and conversation history
+        tab1, tab2 = st.tabs(["📚 Documents", "💬 History"])
         
-        if documents:
-            for doc in documents:
-                render_document_card(doc, api_client)
-        else:
-            st.info("💡 No documents yet. Upload below!")
-        
-        st.markdown("---")
-        st.subheader("📤 Upload Documents")
-        
-        uploaded_files = st.file_uploader(
-            "Choose files",
-            type=ALLOWED_EXTENSIONS,
-            accept_multiple_files=True,
-            help=f"Supported: {', '.join(ALLOWED_EXTENSIONS).upper()} (max {MAX_FILE_SIZE_MB}MB)",
-            key=f"uploader_{st.session_state.uploader_key}",
-            disabled=st.session_state.is_generating
-        )
-        
-        # Auto-process files when uploaded
-        if uploaded_files:
-            if 'last_uploaded_files' not in st.session_state:
-                st.session_state.last_uploaded_files = []
+        with tab1:
+            documents = api_client.get_documents()
+            if documents:
+                st.info(f"📊 {len(documents)} document(s) loaded")
             
-            current_file_names = [f.name for f in uploaded_files]
+            if documents:
+                for doc in documents:
+                    render_document_card(doc, api_client)
+            else:
+                st.info("💡 No documents yet. Upload below!")
             
-            if current_file_names != st.session_state.last_uploaded_files:
-                st.session_state.last_uploaded_files = current_file_names
-                upload_files(uploaded_files, api_client)
+            st.markdown("---")
+            st.subheader("📤 Upload Documents")
+            
+            uploaded_files = st.file_uploader(
+                "Choose files",
+                type=ALLOWED_EXTENSIONS,
+                accept_multiple_files=True,
+                help=f"Supported: {', '.join(ALLOWED_EXTENSIONS).upper()} (max {MAX_FILE_SIZE_MB}MB)",
+                key=f"uploader_{st.session_state.uploader_key}",
+                disabled=st.session_state.is_generating
+            )
+            
+            if uploaded_files:
+                if 'last_uploaded_files' not in st.session_state:
+                    st.session_state.last_uploaded_files = []
+                
+                current_file_names = [f.name for f in uploaded_files]
+                
+                if current_file_names != st.session_state.last_uploaded_files:
+                    st.session_state.last_uploaded_files = current_file_names
+                    upload_files(uploaded_files, api_client)
         
-        # Model selector section
+        with tab2:
+            render_conversation_history()
+        
         st.markdown("---")
         render_model_selector(api_client)
         
         if st.session_state.selected_document and get_current_chat():
             st.markdown("---")
-            if st.button("💬 Clear Chat", use_container_width=True, 
+            if st.button("🗑️ Clear Chat", use_container_width=True, 
                         disabled=st.session_state.is_generating):
                 clear_chat()
                 st.rerun()
