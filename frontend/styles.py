@@ -1,11 +1,11 @@
 """
-Custom CSS styling for the RAG application
+Enhanced custom CSS styling with new component styles
 """
 import streamlit as st
 
 
 def apply_custom_css():
-    """Apply custom CSS - Respects system theme"""
+    """Apply enhanced custom CSS - Respects system theme"""
     st.markdown("""
     <style>
     /* Main header styling */
@@ -64,6 +64,37 @@ def apply_custom_css():
         box-shadow: 0 6px 20px rgba(102, 126, 234, 0.4);
     }
     
+    /* Suggested question buttons */
+    button[key^="suggest_"] {
+        background: rgba(102, 126, 234, 0.05) !important;
+        border: 2px solid rgba(102, 126, 234, 0.2) !important;
+        border-radius: 12px !important;
+        padding: 0.75rem !important;
+        text-align: left !important;
+        font-size: 0.9rem !important;
+        min-height: 60px !important;
+    }
+    
+    button[key^="suggest_"]:hover {
+        background: rgba(102, 126, 234, 0.1) !important;
+        border-color: rgba(102, 126, 234, 0.4) !important;
+        transform: translateY(-2px) !important;
+        box-shadow: 0 4px 12px rgba(102, 126, 234, 0.2) !important;
+    }
+    
+    /* Preview button */
+    button[key^="preview_"] {
+        background: rgba(59, 130, 246, 0.1) !important;
+        border: 2px solid rgba(59, 130, 246, 0.3) !important;
+        color: #3b82f6 !important;
+        font-size: 1.1rem !important;
+    }
+    
+    button[key^="preview_"]:hover {
+        background: rgba(59, 130, 246, 0.2) !important;
+        border-color: #3b82f6 !important;
+    }
+    
     /* Sidebar - Fixed width with smooth transitions */
     section[data-testid="stSidebar"] {
         width: 320px !important;
@@ -83,7 +114,7 @@ def apply_custom_css():
         min-width: 0 !important;
     }
     
-    /* Main content area adjustment when sidebar is collapsed */
+    /* Main content area adjustment */
     .main .block-container {
         transition: padding-left 0.3s ease-in-out !important;
     }
@@ -111,7 +142,7 @@ def apply_custom_css():
         transform: scale(1.05);
     }
     
-    /* Inline stop button - Next to generating message */
+    /* Inline stop button */
     button[key="stop_inline"] {
         background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%) !important;
         color: white !important;
@@ -140,7 +171,76 @@ def apply_custom_css():
         }
     }
     
-    /* Pulse animation for status indicator */
+    /* Download button styling */
+    .stDownloadButton > button {
+        background: rgba(34, 197, 94, 0.1) !important;
+        border: 2px solid rgba(34, 197, 94, 0.3) !important;
+        color: #22c55e !important;
+    }
+    
+    .stDownloadButton > button:hover {
+        background: rgba(34, 197, 94, 0.2) !important;
+        border-color: #22c55e !important;
+    }
+    
+    /* Expander styling */
+    .streamlit-expanderHeader {
+        background: rgba(102, 126, 234, 0.05) !important;
+        border-radius: 8px !important;
+        border: 1px solid rgba(102, 126, 234, 0.2) !important;
+    }
+    
+    .streamlit-expanderHeader:hover {
+        background: rgba(102, 126, 234, 0.1) !important;
+        border-color: rgba(102, 126, 234, 0.3) !important;
+    }
+    
+    /* Source citation styling */
+    .streamlit-expanderContent {
+        background: rgba(0, 0, 0, 0.02) !important;
+        border-radius: 0 0 8px 8px !important;
+        padding: 1rem !important;
+    }
+    
+    /* Metrics styling */
+    [data-testid="stMetricValue"] {
+        font-size: 1.5rem !important;
+        font-weight: 700 !important;
+        color: #667eea !important;
+    }
+    
+    /* Tab styling */
+    .stTabs [data-baseweb="tab-list"] {
+        gap: 8px;
+    }
+    
+    .stTabs [data-baseweb="tab"] {
+        border-radius: 8px 8px 0 0;
+        padding: 0.5rem 1rem;
+        background: rgba(102, 126, 234, 0.05);
+        border: 2px solid transparent;
+    }
+    
+    .stTabs [aria-selected="true"] {
+        background: rgba(102, 126, 234, 0.1) !important;
+        border-color: rgba(102, 126, 234, 0.3) !important;
+    }
+    
+    /* Conversation history buttons */
+    button[key^="conv_"] {
+        text-align: left !important;
+        white-space: pre-line !important;
+        font-size: 0.85rem !important;
+        min-height: 60px !important;
+    }
+    
+    button[key^="del_conv_"] {
+        background: rgba(239, 68, 68, 0.1) !important;
+        border: 2px solid rgba(239, 68, 68, 0.3) !important;
+        color: #ef4444 !important;
+    }
+    
+    /* Pulse animation */
     @keyframes pulse {
         0%, 100% {
             opacity: 1;
@@ -201,6 +301,13 @@ def apply_custom_css():
         border-radius: 12px !important;
         padding: 1rem !important;
         margin-bottom: 0.5rem !important;
+    }
+    
+    /* Caption styling */
+    .caption {
+        font-size: 0.85rem;
+        opacity: 0.7;
+        margin-top: 0.25rem;
     }
     
     /* Responsive design */
