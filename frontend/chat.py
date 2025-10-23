@@ -2,10 +2,30 @@
 Chat interface components - Using Streamlit's native chat input with manual stop control
 """
 import streamlit as st
+import random
 from datetime import datetime
 from typing import Dict
 from session_state import get_current_chat, add_message
 from toast import ToastNotification
+
+# Random thinking messages
+THINKING_MESSAGES = [
+    "🤔 Analyzing document...",
+    "💭 Thinking...",
+    "📖 Reading through content...",
+    "🔍 Searching for answers...",
+    "⚡ Processing your question...",
+    "🧠 Understanding the context...",
+    "📚 Consulting the documents...",
+    "🔎 Finding relevant information...",
+    "💡 Gathering insights...",
+    "🎯 Locating the answer...",
+    "📝 Reviewing the content...",
+    "🌟 Working on it...",
+    "⏳ Just a moment...",
+    "🚀 Generating response...",
+    "🔮 Exploring the knowledge base..."
+]
 
 
 def render_chat(api_client, health_data: Dict, model: str):
@@ -74,6 +94,11 @@ def render_chat(api_client, health_data: Dict, model: str):
             
             # Generate response
             with st.chat_message("assistant"):
+                # Show random thinking indicator
+                thinking_placeholder = st.empty()
+                thinking_message = f"*{random.choice(THINKING_MESSAGES)}*"
+                thinking_placeholder.markdown(thinking_message)
+                
                 # Create columns for response and stop button
                 col1, col2 = st.columns([6, 1])
                 
@@ -96,21 +121,25 @@ def render_chat(api_client, health_data: Dict, model: str):
                         # Check stop flag
                         if st.session_state.stop_generation:
                             stopped = True
+                            thinking_placeholder.empty()  # Clear thinking indicator
                             if response:
-                                response += "\n\n*[Generation stopped by user]*"
+                                response += "\n\n*[Interrupted by user]*"
                             else:
-                                response = "*[Generation stopped before content was generated]*"
+                                response = "*[Interrupted before content was generated]*"
                             response_placeholder.markdown(response)
                             break
                         
                         if data.get('type') == 'metadata':
                             sources = data.get('sources', [])
+                            thinking_placeholder.empty()  # Clear thinking indicator when content starts
                         elif data.get('type') == 'content':
+                            thinking_placeholder.empty()  # Clear thinking indicator
                             response += data.get('content', '')
                             response_placeholder.markdown(response + "▌")
                         elif data.get('type') == 'done':
                             response_placeholder.markdown(response)
                         elif data.get('type') == 'error':
+                            thinking_placeholder.empty()  # Clear thinking indicator
                             error_msg = data.get('message', 'Unknown error')
                             error = f"❌ Error: {error_msg}"
                             response_placeholder.error(error)
@@ -118,6 +147,7 @@ def render_chat(api_client, health_data: Dict, model: str):
                             error_occurred = True
                             break
                     
+                    thinking_placeholder.empty()  # Clear thinking indicator when done
                     if response and not error_occurred:
                         response_placeholder.markdown(response)
                     
@@ -137,6 +167,7 @@ def render_chat(api_client, health_data: Dict, model: str):
                         ToastNotification.show("Generation stopped", "warning")
                         
                 except Exception as e:
+                    thinking_placeholder.empty()  # Clear thinking indicator
                     error = f"❌ Error: {str(e)}"
                     response_placeholder.error(error)
                     stop_button_placeholder.empty()  # Clear stop button on error
