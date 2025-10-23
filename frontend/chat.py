@@ -38,26 +38,6 @@ def render_chat(api_client, health_data: Dict, model: str):
             if msg.get("stopped"):
                 st.caption("⚠️ Generation was stopped")
     
-    # Chat input section with stop button integration
-    if st.session_state.is_generating:
-        # Show generating status with stop button
-        st.markdown("---")
-        st.markdown(
-            '<p style="text-align: center; color: #ef4444; font-size: 1rem; margin-bottom: 0.5rem;">'
-            '<span style="display: inline-block; width: 10px; height: 10px; background: #ef4444; border-radius: 50%; margin-right: 8px; animation: pulse 2s infinite;"></span>'
-            '<strong>AI is generating response...</strong>'
-            '</p>', 
-            unsafe_allow_html=True
-        )
-        
-        col1, col2, col3 = st.columns([1, 2, 1])
-        with col2:
-            if st.button("🛑 Stop Generation", key="stop_generation_btn", use_container_width=True, type="primary"):
-                st.session_state.stop_generation = True
-                st.rerun()
-        
-        st.markdown("---")
-    
     # Use native Streamlit chat input
     prompt = st.chat_input(
         f"💭 Ask about {st.session_state.selected_document}...",
@@ -91,7 +71,17 @@ def render_chat(api_client, health_data: Dict, model: str):
             
             # Generate response
             with st.chat_message("assistant"):
-                response_placeholder = st.empty()
+                # Create columns for response and stop button
+                col1, col2 = st.columns([6, 1])
+                
+                with col1:
+                    response_placeholder = st.empty()
+                
+                with col2:
+                    stop_button_placeholder = st.empty()
+                    if stop_button_placeholder.button("⏹️", key="stop_inline", help="Stop generation", use_container_width=True):
+                        st.session_state.stop_generation = True
+                        st.rerun()
                 
                 response = ""
                 sources = []
@@ -128,6 +118,9 @@ def render_chat(api_client, health_data: Dict, model: str):
                     if response and not error_occurred:
                         response_placeholder.markdown(response)
                     
+                    # Clear stop button after generation completes
+                    stop_button_placeholder.empty()
+                    
                     # Save assistant message
                     add_message({
                         "role": "assistant",
@@ -143,6 +136,7 @@ def render_chat(api_client, health_data: Dict, model: str):
                 except Exception as e:
                     error = f"❌ Error: {str(e)}"
                     response_placeholder.error(error)
+                    stop_button_placeholder.empty()  # Clear stop button on error
                     add_message({
                         "role": "assistant",
                         "content": error,
