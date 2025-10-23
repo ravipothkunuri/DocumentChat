@@ -5,7 +5,7 @@ import streamlit as st
 from typing import List, Dict
 from toast import ToastNotification
 from session_state import get_current_chat, clear_chat
-from config import ALLOWED_EXTENSIONS, MAX_FILE_SIZE_MB
+from config import ALLOWED_EXTENSIONS, MAX_FILE_SIZE_MB, DEFAULT_LLM_MODEL
 
 
 def render_document_card(doc: Dict, api_client):
@@ -76,6 +76,46 @@ def upload_files(files: List, api_client):
     st.rerun()
 
 
+def render_model_selector(api_client):
+    """Render model selection dropdown"""
+    st.subheader("🤖 Model Settings")
+    
+    # Get available models
+    models_data = api_client.get_models()
+    
+    # Get current configuration
+    current_config = models_data.get('current_config', {})
+    ollama_models = models_data.get('ollama', {})
+    
+    # LLM Model selection
+    llm_models = ollama_models.get('llm_models', [DEFAULT_LLM_MODEL])
+    current_model = st.session_state.get('current_model', 
+                                         current_config.get('model', DEFAULT_LLM_MODEL))
+    
+    # Ensure current model is in the list
+    if current_model not in llm_models and llm_models:
+        current_model = llm_models[0]
+    
+    selected_model = st.selectbox(
+        "💬 Chat Model",
+        options=llm_models,
+        index=llm_models.index(current_model) if current_model in llm_models else 0,
+        help="Select the language model for chat responses",
+        disabled=st.session_state.is_generating,
+        key="model_selector"
+    )
+    
+    # Update session state if changed
+    if selected_model != st.session_state.get('current_model'):
+        st.session_state.current_model = selected_model
+        ToastNotification.show(f"Model changed to {selected_model}", "success")
+        st.rerun()
+    
+    # Embedding Model info (read-only)
+    embedding_model = current_config.get('embedding_model', 'nomic-embed-text')
+    st.caption(f"🔢 Embedding: **{embedding_model}**")
+
+
 def render_sidebar(api_client):
     """Render sidebar"""
     with st.sidebar:        
@@ -112,6 +152,10 @@ def render_sidebar(api_client):
             if current_file_names != st.session_state.last_uploaded_files:
                 st.session_state.last_uploaded_files = current_file_names
                 upload_files(uploaded_files, api_client)
+        
+        # Model selector section
+        st.markdown("---")
+        render_model_selector(api_client)
         
         if st.session_state.selected_document and get_current_chat():
             st.markdown("---")
