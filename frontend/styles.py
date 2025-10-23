@@ -20,6 +20,25 @@ def apply_custom_css():
         padding: 0.5rem 0;
     }
     
+    /* Sidebar collapse button - Fixed positioning */
+    button[kind="header"] {
+        position: fixed !important;
+        top: 0.5rem !important;
+        left: 0.5rem !important;
+        z-index: 999999 !important;
+        background: rgba(102, 126, 234, 0.1) !important;
+        border: 2px solid rgba(102, 126, 234, 0.3) !important;
+        border-radius: 8px !important;
+        padding: 0.5rem !important;
+        transition: all 0.3s ease !important;
+    }
+    
+    button[kind="header"]:hover {
+        background: rgba(102, 126, 234, 0.2) !important;
+        border-color: rgba(102, 126, 234, 0.5) !important;
+        transform: scale(1.05) !important;
+    }
+    
     /* Enhanced button styling */
     .stButton > button {
         border-radius: 8px;
@@ -45,15 +64,28 @@ def apply_custom_css():
         box-shadow: 0 6px 20px rgba(102, 126, 234, 0.4);
     }
     
-    /* Sidebar - Fixed width */
+    /* Sidebar - Fixed width with smooth transitions */
     section[data-testid="stSidebar"] {
         width: 320px !important;
         min-width: 320px !important;
         max-width: 320px !important;
+        transition: all 0.3s ease-in-out !important;
     }
     
     section[data-testid="stSidebar"] > div {
         width: 320px !important;
+        padding-top: 4rem !important;
+    }
+    
+    /* Collapsed sidebar adjustments */
+    section[data-testid="stSidebar"][aria-expanded="false"] {
+        width: 0 !important;
+        min-width: 0 !important;
+    }
+    
+    /* Main content area adjustment when sidebar is collapsed */
+    .main .block-container {
+        transition: padding-left 0.3s ease-in-out !important;
     }
     
     /* Delete button - Centered */
@@ -155,6 +187,22 @@ def apply_custom_css():
         }
     }
     
+    /* Document card hover effect */
+    button[key*="select_"] {
+        transition: all 0.2s ease !important;
+    }
+    
+    button[key*="select_"]:hover {
+        transform: translateX(4px) !important;
+    }
+    
+    /* Chat message styling */
+    .stChatMessage {
+        border-radius: 12px !important;
+        padding: 1rem !important;
+        margin-bottom: 0.5rem !important;
+    }
+    
     /* Responsive design */
     @media screen and (max-width: 768px) {
         .main-header { 
@@ -165,10 +213,39 @@ def apply_custom_css():
             width: 100% !important; 
             min-height: 44px !important; 
         }
+        
+        section[data-testid="stSidebar"] {
+            width: 280px !important;
+            min-width: 280px !important;
+        }
+        
+        section[data-testid="stSidebar"] > div {
+            width: 280px !important;
+        }
     }
     
     /* Hide Streamlit branding */
     #MainMenu {visibility: hidden;}
     footer {visibility: hidden;}
+    
+    /* Scrollbar styling */
+    ::-webkit-scrollbar {
+        width: 8px;
+        height: 8px;
+    }
+    
+    ::-webkit-scrollbar-track {
+        background: rgba(0, 0, 0, 0.05);
+        border-radius: 4px;
+    }
+    
+    ::-webkit-scrollbar-thumb {
+        background: rgba(102, 126, 234, 0.3);
+        border-radius: 4px;
+    }
+    
+    ::-webkit-scrollbar-thumb:hover {
+        background: rgba(102, 126, 234, 0.5);
+    }
     </style>
     """, unsafe_allow_html=True)
