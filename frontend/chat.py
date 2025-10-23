@@ -4,7 +4,7 @@ Enhanced chat interface with export, suggestions, and better citations
 import streamlit as st
 import random
 from datetime import datetime
-from typing import Dict
+from typing import Dict, List, Optional
 from session_state import (
     get_current_chat, add_message, export_chat_json, 
     export_chat_markdown, get_suggested_questions, save_conversation
@@ -94,7 +94,7 @@ def render_suggested_questions(api_client, model: str):
                         st.rerun()
 
 
-def render_source_citations(sources: list, similarity_scores: list = None):
+def render_source_citations(sources: List, similarity_scores: Optional[List] = None):
     """Render enhanced source citations with scores"""
     if not sources:
         return
