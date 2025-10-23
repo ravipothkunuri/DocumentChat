@@ -18,11 +18,10 @@ def init_session_state():
         'is_generating': False,
         'stop_generation': False,
         'show_onboarding': True,
-        'conversation_history': [],  # List of past conversations
-        'selected_conversation': None,  # Currently selected conversation
-        'show_conversation_sidebar': False,  # Toggle conversation history
-        'show_document_preview': None,  # Document to preview
-        'suggested_questions': {},  # Suggested questions per document
+        'conversation_history': [],
+        'selected_conversation': None,
+        'show_doc_info': None,  # Changed from show_document_preview
+        'suggested_questions': {},
     }
     for key, value in defaults.items():
         if key not in st.session_state:
