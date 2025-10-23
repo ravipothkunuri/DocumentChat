@@ -25,7 +25,7 @@ def render_document_card(doc: Dict, api_client):
                 f"{'📘' if is_selected else '📄'} {doc_name}",
                 key=f"select_{doc_name}",
                 use_container_width=True,
-                type="primary" if is_selected else="secondary",
+                type="primary" if is_selected else "secondary",
                 disabled=st.session_state.is_generating,
                 help=f"{doc['chunks']} chunks • {doc['size'] / 1024:.1f} KB"
             ):
