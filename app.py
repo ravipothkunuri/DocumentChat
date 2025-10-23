@@ -134,7 +134,7 @@ class ToastNotification:
             st.session_state.toast_queue = []
             return
         
-        # Remove toasts older than 4 seconds (server-side cleanup only)
+        # Remove toasts older than 4 seconds (backup cleanup)
         current_time = time.time()
         st.session_state.toast_queue = [
             toast for toast in st.session_state.toast_queue 
@@ -145,7 +145,6 @@ class ToastNotification:
             return
         
         toasts_html = ""
-        toast_scripts = []
         
         for i, toast in enumerate(st.session_state.toast_queue):
             bg_color, text_color, border_color = ToastNotification.COLORS.get(
@@ -155,9 +154,11 @@ class ToastNotification:
             # Stack toasts vertically with offset
             top_position = 80 + (i * 90)
             toast_id = f"toast-{toast['id']}"
+            # Use data attributes to store timing info
+            age_ms = int((current_time - toast['timestamp']) * 1000)
             
             toasts_html += f"""
-                <div id="{toast_id}" style="
+                <div id="{toast_id}" class="custom-toast" data-age="{age_ms}" style="
                     position: fixed;
                     top: {top_position}px;
                     right: 20px;
@@ -173,6 +174,7 @@ class ToastNotification:
                     font-weight: 500;
                     overflow: hidden;
                     animation: slideIn 0.3s ease-out;
+                    cursor: pointer;
                 ">
                     <div style="margin-bottom: 8px;">{toast['message']}</div>
                     <div style="
@@ -182,61 +184,14 @@ class ToastNotification:
                         overflow: hidden;
                         margin: 0 -20px -14px -20px;
                     ">
-                        <div id="{toast_id}-progress" style="
+                        <div class="toast-progress-bar" style="
                             height: 100%;
                             background: {border_color};
                             width: 100%;
-                            transition: width 0.05s linear;
                         "></div>
                     </div>
                 </div>
             """
-            
-            toast_scripts.append(f"""
-                (function() {{
-                    const toast = document.getElementById('{toast_id}');
-                    const progress = document.getElementById('{toast_id}-progress');
-                    if (!toast || !progress) return;
-                    
-                    let startTime = Date.now();
-                    const duration = 3000;
-                    
-                    function updateProgress() {{
-                        const elapsed = Date.now() - startTime;
-                        const remaining = Math.max(0, 100 - (elapsed / duration * 100));
-                        
-                        if (progress) {{
-                            progress.style.width = remaining + '%';
-                        }}
-                        
-                        if (elapsed >= duration) {{
-                            toast.style.animation = 'slideOut 0.3s ease-in forwards';
-                            setTimeout(() => {{
-                                if (toast && toast.parentNode) {{
-                                    toast.remove();
-                                }}
-                            }}, 300);
-                        }} else {{
-                            requestAnimationFrame(updateProgress);
-                        }}
-                    }}
-                    
-                    requestAnimationFrame(updateProgress);
-                    
-                    // Click to dismiss
-                    toast.style.cursor = 'pointer';
-                    toast.addEventListener('click', function() {{
-                        toast.style.animation = 'slideOut 0.3s ease-in forwards';
-                        setTimeout(() => {{
-                            if (toast && toast.parentNode) {{
-                                toast.remove();
-                            }}
-                        }}, 300);
-                    }});
-                }})();
-            """)
-        
-        all_scripts = "\n".join(toast_scripts)
         
         st.markdown(f"""
             {toasts_html}
@@ -263,7 +218,50 @@ class ToastNotification:
                 }}
             </style>
             <script>
-                {all_scripts}
+                (function() {{
+                    // Process all toasts
+                    const toasts = document.querySelectorAll('.custom-toast');
+                    const DURATION = 3000; // 3 seconds
+                    
+                    toasts.forEach(function(toast) {{
+                        const progressBar = toast.querySelector('.toast-progress-bar');
+                        const initialAge = parseInt(toast.getAttribute('data-age')) || 0;
+                        const remainingTime = Math.max(0, DURATION - initialAge);
+                        
+                        if (remainingTime === 0) {{
+                            // Already expired, remove immediately
+                            if (toast.parentNode) toast.remove();
+                            return;
+                        }}
+                        
+                        // Animate progress bar
+                        if (progressBar) {{
+                            const initialProgress = (remainingTime / DURATION) * 100;
+                            progressBar.style.width = initialProgress + '%';
+                            progressBar.style.transition = `width ${{remainingTime}}ms linear`;
+                            
+                            // Force reflow to trigger transition
+                            void progressBar.offsetWidth;
+                            progressBar.style.width = '0%';
+                        }}
+                        
+                        // Auto-dismiss after remaining time
+                        setTimeout(function() {{
+                            toast.style.animation = 'slideOut 0.3s ease-in forwards';
+                            setTimeout(function() {{
+                                if (toast.parentNode) toast.remove();
+                            }}, 300);
+                        }}, remainingTime);
+                        
+                        // Click to dismiss
+                        toast.addEventListener('click', function() {{
+                            toast.style.animation = 'slideOut 0.3s ease-in forwards';
+                            setTimeout(function() {{
+                                if (toast.parentNode) toast.remove();
+                            }}, 300);
+                        }});
+                    }});
+                }})();
             </script>
         """, unsafe_allow_html=True)
 
