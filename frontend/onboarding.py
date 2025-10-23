@@ -76,7 +76,7 @@ def render_onboarding():
         
         with feat_col3:
             st.markdown("""
-            **👁️ Document Preview**  
+            **ℹ️ Document Info**  
             Quick preview of document details and metadata
             """)
         
@@ -157,50 +157,6 @@ def render_quick_start_card():
         st.rerun()
     
     st.markdown("</div>", unsafe_allow_html=True)
-
-
-def render_feature_tour(health_data: Dict):
-    """Render contextual feature tour based on user state"""
-    
-    # Show different tips based on context
-    if health_data and health_data.get('document_count', 0) == 0:
-        with st.expander("💡 Pro Tip: Getting Started", expanded=False):
-            st.markdown("""
-            **Upload your first document** to unlock the full power of RAG Chat:
-            
-            - 📊 **PDFs**: Research papers, reports, manuals
-            - 📝 **Text Files**: Notes, transcripts, logs  
-            - 📄 **Word Docs**: Articles, documentation
-            
-            Once uploaded, you can ask questions and get AI-powered answers!
-            """)
-    
-    elif health_data and health_data.get('total_queries', 0) == 0:
-        with st.expander("💡 Pro Tip: Asking Questions", expanded=False):
-            st.markdown("""
-            **Try these question types** for best results:
-            
-            - 📋 **Summarization**: "What are the main points?"
-            - 🔍 **Specific Info**: "What does it say about...?"
-            - 💡 **Analysis**: "What are the key findings?"
-            - 📊 **Comparison**: "How does X compare to Y?"
-            
-            Use the suggested questions to get started quickly!
-            """)
-    
-    elif health_data and health_data.get('total_queries', 0) >= 5:
-        with st.expander("💡 Pro Tip: Power Features", expanded=False):
-            st.markdown("""
-            **Unlock advanced features** you might have missed:
-            
-            - 📥 **Export Chats**: Download as JSON or Markdown
-            - 💾 **Save Conversations**: Build a history library
-            - 👁️ **Document Preview**: Quick metadata view
-            - 📚 **Source Citations**: See relevance scores
-            - ⏹️ **Stop Generation**: Control long responses
-            
-            Explore the sidebar tabs for more options!
-            """)
 
 
 def should_show_onboarding() -> bool:
