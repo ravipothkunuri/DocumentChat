@@ -12,78 +12,99 @@ from config import ALLOWED_EXTENSIONS, MAX_FILE_SIZE_MB, DEFAULT_LLM_MODEL
 from datetime import datetime
 
 
-def render_document_preview(doc: Dict, api_client):
-    """Render document preview modal"""
-    if st.session_state.show_document_preview == doc['filename']:
-        with st.expander(f"📄 Preview: {doc['filename']}", expanded=True):
+def render_document_preview_dropdown(doc: Dict):
+    """Render document preview in dropdown"""
+    with st.expander(f"📄 {doc['filename']}", expanded=False):
+        col1, col2 = st.columns([3, 1])
+        
+        with col1:
             st.markdown(f"""
-            **Filename:** {doc['filename']}  
-            **Size:** {doc['size']:,} bytes ({doc['size'] / 1024:.1f} KB)  
+            **Size:** {doc['size'] / 1024:.1f} KB  
             **Type:** {doc['type'].upper()}  
             **Chunks:** {doc['chunks']}  
             **Uploaded:** {datetime.fromisoformat(doc['uploaded_at']).strftime('%Y-%m-%d %H:%M')}
             """)
-            
-            st.info("💡 Full content preview would require fetching document chunks from the backend.")
-            
-            if st.button("✕ Close Preview", use_container_width=True):
-                st.session_state.show_document_preview = None
+        
+        with col2:
+            is_selected = st.session_state.selected_document == doc['filename']
+            if st.button(
+                "✓ Selected" if is_selected else "Select",
+                key=f"select_dropdown_{doc['filename']}",
+                use_container_width=True,
+                type="primary" if is_selected else "secondary",
+                disabled=st.session_state.is_generating or is_selected
+            ):
+                st.session_state.selected_document = doc['filename']
                 st.rerun()
 
 
 def render_document_card(doc: Dict, api_client):
-    """Render enhanced document card"""
+    """Render compact document card with dropdown menu"""
     doc_name = doc['filename']
     is_selected = st.session_state.selected_document == doc_name
     
-    col1, col2, col3 = st.columns([4, 1, 1])
-    
-    with col1:
-        if st.button(
-            f"{'📘' if is_selected else '📄'} **{doc_name}**",
-            key=f"select_{doc_name}",
-            use_container_width=True,
-            type="primary" if is_selected else "secondary",
-            disabled=st.session_state.is_generating
-        ):
-            st.session_state.selected_document = doc_name
-            st.rerun()
-    
-    with col2:
-        if st.button("👁️", key=f"preview_{doc_name}",
-                   help="Preview document",
-                   type="secondary",
-                   disabled=st.session_state.is_generating):
-            st.session_state.show_document_preview = doc_name
-            st.rerun()
-    
-    with col3:
-        if st.button("✕", key=f"delete_{doc_name}", 
-                   help="Delete document",
-                   type="secondary",
-                   disabled=st.session_state.is_generating):
-            status_code, response = api_client.delete_document(doc_name)
-            if status_code == 200:
-                if doc_name in st.session_state.document_chats:
-                    del st.session_state.document_chats[doc_name]
-                if st.session_state.selected_document == doc_name:
-                    st.session_state.selected_document = None
-                
-                ToastNotification.show(f"Deleted {doc_name}", "success")
+    # Single card with all information
+    with st.container():
+        col1, col2, col3 = st.columns([5, 1, 1])
+        
+        with col1:
+            # Document name button
+            if st.button(
+                f"{'📘' if is_selected else '📄'} {doc_name}",
+                key=f"select_{doc_name}",
+                use_container_width=True,
+                type="primary" if is_selected else "secondary",
+                disabled=st.session_state.is_generating
+            ):
+                st.session_state.selected_document = doc_name
                 st.rerun()
-            else:
-                ToastNotification.show(f"{response.get('message', 'Delete failed')}", "error")
-    
-    if is_selected:
-        st.caption(f"📊 {doc['chunks']} chunks • {doc['size']:,} bytes • {doc['type'].upper()}")
-        if doc_name in st.session_state.document_chats:
+        
+        with col2:
+            # Info dropdown
+            if st.button("ℹ️", key=f"info_{doc_name}",
+                       help="Document info",
+                       disabled=st.session_state.is_generating):
+                if st.session_state.get('show_doc_info') == doc_name:
+                    st.session_state.show_doc_info = None
+                else:
+                    st.session_state.show_doc_info = doc_name
+                st.rerun()
+        
+        with col3:
+            # Delete button
+            if st.button("🗑️", key=f"delete_{doc_name}", 
+                       help="Delete document",
+                       disabled=st.session_state.is_generating):
+                status_code, response = api_client.delete_document(doc_name)
+                if status_code == 200:
+                    if doc_name in st.session_state.document_chats:
+                        del st.session_state.document_chats[doc_name]
+                    if st.session_state.selected_document == doc_name:
+                        st.session_state.selected_document = None
+                    
+                    ToastNotification.show(f"Deleted {doc_name}", "success")
+                    st.rerun()
+                else:
+                    ToastNotification.show(f"{response.get('message', 'Delete failed')}", "error")
+        
+        # Show info dropdown if toggled
+        if st.session_state.get('show_doc_info') == doc_name:
+            st.markdown(f"""
+            <div style="padding: 0.5rem; background: rgba(102, 126, 234, 0.05); border-radius: 8px; margin-top: 0.5rem;">
+            <small><strong>Size:</strong> {doc['size'] / 1024:.1f} KB<br>
+            <strong>Type:</strong> {doc['type'].upper()}<br>
+            <strong>Chunks:</strong> {doc['chunks']}<br>
+            <strong>Uploaded:</strong> {datetime.fromisoformat(doc['uploaded_at']).strftime('%Y-%m-%d %H:%M')}</small>
+            </div>
+            """, unsafe_allow_html=True)
+        
+        # Show message count if selected
+        if is_selected and doc_name in st.session_state.document_chats:
             msg_count = len(st.session_state.document_chats[doc_name])
             if msg_count > 0:
                 st.caption(f"💬 {msg_count} messages")
-    
-    # Show preview if requested
-    if st.session_state.show_document_preview == doc_name:
-        render_document_preview(doc, api_client)
+        
+        st.markdown("---")
 
 
 def render_conversation_history():
@@ -179,21 +200,24 @@ def render_model_selector(api_client):
         st.rerun()
     
     embedding_model = current_config.get('embedding_model', 'nomic-embed-text')
-    st.caption(f"📢 Embedding: **{embedding_model}**")
+    st.caption(f"📊 Embedding: **{embedding_model}**")
 
 
 def render_sidebar(api_client):
     """Render enhanced sidebar"""
     with st.sidebar:
+        # Model selector at the top
+        render_model_selector(api_client)
+        st.markdown("---")
+        
         # Toggle between documents and conversation history
         tab1, tab2 = st.tabs(["📚 Documents", "💬 History"])
         
         with tab1:
             documents = api_client.get_documents()
-            if documents:
-                st.info(f"📊 {len(documents)} document(s) loaded")
             
             if documents:
+                st.info(f"📊 {len(documents)} document(s) loaded")
                 for doc in documents:
                     render_document_card(doc, api_client)
             else:
@@ -224,9 +248,7 @@ def render_sidebar(api_client):
         with tab2:
             render_conversation_history()
         
-        st.markdown("---")
-        render_model_selector(api_client)
-        
+        # Clear chat button at the bottom
         if st.session_state.selected_document and get_current_chat():
             st.markdown("---")
             if st.button("🗑️ Clear Chat", use_container_width=True, 
