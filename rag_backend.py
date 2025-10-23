@@ -3,12 +3,12 @@ import json
 import logging
 import traceback
 import re
+import requests
 from datetime import datetime
 from pathlib import Path
 from typing import List, Dict, Any, Optional, Iterator
 from contextlib import asynccontextmanager
 
-import requests
 import uvicorn
 from fastapi import FastAPI, File, UploadFile, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -25,8 +25,8 @@ from vector_store import VectorStore
 
 # Configure logging
 logging.basicConfig(
-    level=logging.DEBUG,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(filename)s:%(lineno)d - %(message)s',
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
     handlers=[
         logging.StreamHandler(),
         logging.FileHandler('rag_app.log')
@@ -44,8 +44,10 @@ ALLOWED_EXTENSIONS = {'.pdf', '.txt', '.docx'}
 MAX_FILE_SIZE_MB = 20
 MAX_FILE_SIZE_BYTES = MAX_FILE_SIZE_MB * 1024 * 1024
 
+# ============================================================================
+# PYDANTIC MODELS
+# ============================================================================
 
-# Pydantic Models
 class QueryRequest(BaseModel):
     question: str = Field(..., min_length=1, max_length=5000)
     model: Optional[str] = None
@@ -85,10 +87,12 @@ class DocumentInfo(BaseModel):
     uploaded_at: str
     type: str
 
+# ============================================================================
+# OLLAMA LLM
+# ============================================================================
 
-# Ollama LLM with automatic endpoint detection
 class OllamaLLM:
-    """Universal Ollama LLM client with automatic endpoint detection."""
+    """Universal Ollama LLM client with automatic endpoint detection"""
     
     CHAT_MODEL_PATTERNS = [
         'llama3', 'llama-3', 'gemma', 'qwen', 'mistral', 'mixtral',
@@ -112,35 +116,26 @@ class OllamaLLM:
         self.endpoint_type = None
         self.model_loaded = False
         self.model_info = None
-        logger.info(f"Initializing OllamaLLM with model: {model}")
     
     def _get_model_info(self) -> Dict[str, Any]:
-        """Fetch model information from Ollama's show API."""
+        """Fetch model information from Ollama's show API"""
         if self.model_info is not None:
             return self.model_info
         
         try:
             show_url = f"{self.base_url}/api/show"
             payload = {"name": self.model}
-            
             response = requests.post(show_url, json=payload, timeout=10)
             
             if response.status_code == 200:
                 self.model_info = response.json()
-                logger.debug(f"Model info retrieved for {self.model}")
                 return self.model_info
-            elif response.status_code == 404:
-                logger.warning(f"Model '{self.model}' not found in Ollama")
-                return {}
-            else:
-                logger.warning(f"Unexpected status {response.status_code} from show API")
-                return {}
-        except Exception as e:
-            logger.debug(f"Error fetching model info: {e}")
+            return {}
+        except Exception:
             return {}
     
     def _detect_endpoint_from_model_info(self) -> Optional[str]:
-        """Detect endpoint type from model information."""
+        """Detect endpoint type from model information"""
         model_info = self._get_model_info()
         
         if not model_info:
@@ -155,34 +150,29 @@ class OllamaLLM:
         ]
         
         if any(indicator in template for indicator in chat_indicators):
-            logger.info(f"Model {self.model} supports chat (template)")
             return "chat"
         
         if 'chat' in modelfile or any(indicator in modelfile for indicator in chat_indicators):
-            logger.info(f"Model {self.model} supports chat (modelfile)")
             return "chat"
         
         parameters = model_info.get('parameters', '')
         if 'chat' in parameters.lower():
-            logger.info(f"Model {self.model} supports chat (parameters)")
             return "chat"
         
         return None
     
     def _detect_endpoint_from_name(self) -> str:
-        """Fallback: detect endpoint from model name patterns."""
+        """Fallback: detect endpoint from model name patterns"""
         model_lower = self.model.lower()
         
         for pattern in self.CHAT_MODEL_PATTERNS:
             if pattern in model_lower:
-                logger.info(f"Model {self.model} likely supports chat (name pattern)")
                 return "chat"
         
-        logger.info(f"Model {self.model} defaulting to generate endpoint")
         return "generate"
     
     def _detect_endpoint(self) -> None:
-        """Detect which endpoint the model supports."""
+        """Detect which endpoint the model supports"""
         if self.endpoint_type is not None:
             return
         
@@ -192,10 +182,34 @@ class OllamaLLM:
             detected_type = self._detect_endpoint_from_name()
         
         self.endpoint_type = detected_type
-        logger.info(f"Model {self.model} will use /api/{self.endpoint_type} endpoint")
+    
+    def _verify_endpoint_with_minimal_call(self) -> None:
+        """Verify endpoint works with a minimal test call"""
+        if self.model_loaded:
+            return
+        
+        try:
+            url, payload = self._build_payload("test", stream=False)
+            
+            if self.endpoint_type == "chat":
+                payload["messages"] = [{"role": "user", "content": "Hi"}]
+                payload["options"] = {"num_predict": 1}
+            else:
+                payload["prompt"] = "Hi"
+                payload["options"] = {"num_predict": 1}
+            
+            response = requests.post(url, json=payload, timeout=15)
+            
+            if response.status_code == 200:
+                self.model_loaded = True
+            elif response.status_code == 404 and self.endpoint_type == "chat":
+                self.endpoint_type = "generate"
+                self.model_loaded = False
+        except Exception:
+            pass
     
     def _build_payload(self, prompt: str, stream: bool) -> tuple[str, dict]:
-        """Build request payload based on endpoint type."""
+        """Build request payload based on endpoint type"""
         self._detect_endpoint()
         
         common_options = {"temperature": self.temperature}
@@ -220,25 +234,29 @@ class OllamaLLM:
         return url, payload
     
     def _extract_content(self, data: dict) -> str:
-        """Extract content from response based on endpoint type."""
+        """Extract content from response based on endpoint type"""
         if self.endpoint_type == "chat":
             return data.get("message", {}).get("content", "")
         return data.get("response", "")
 
-    def _get_timeout(self) -> int:
-        """Get appropriate timeout value."""
-        return self.cold_start_timeout if not self.model_loaded else self.timeout
+    def _get_timeout(self, is_first_call: bool = False) -> int:
+        """Get the timeout value"""
+        if is_first_call or not self.model_loaded:
+            return self.cold_start_timeout
+        return self.timeout
 
     def invoke(self, prompt: str) -> str:
-        """Invoke the model with a prompt."""
+        """Invoke the model with a prompt"""
         try:
+            if not self.model_loaded:
+                self._verify_endpoint_with_minimal_call()
+            
             url, payload = self._build_payload(prompt, stream=False)
             current_timeout = self._get_timeout()
-            
+
             response = requests.post(url, json=payload, timeout=current_timeout)
             
             if response.status_code == 404 and self.endpoint_type == "chat":
-                logger.warning(f"Chat endpoint failed, retrying with generate")
                 self.endpoint_type = "generate"
                 url, payload = self._build_payload(prompt, stream=False)
                 response = requests.post(url, json=payload, timeout=current_timeout)
@@ -257,20 +275,23 @@ class OllamaLLM:
             raise ValueError(f"Failed to communicate with model: {str(e)}")
     
     def stream(self, prompt: str) -> Iterator[str]:
-        """Stream the model's response."""
+        """Stream the model's response"""
         try:
+            if not self.model_loaded:
+                self._verify_endpoint_with_minimal_call()
+            
             url, payload = self._build_payload(prompt, stream=True)
             current_timeout = self._get_timeout()
             
             response = requests.post(url, json=payload, timeout=current_timeout, stream=True)
             
             if response.status_code == 404 and self.endpoint_type == "chat":
-                logger.warning(f"Chat endpoint failed, retrying with generate")
                 self.endpoint_type = "generate"
                 url, payload = self._build_payload(prompt, stream=True)
                 response = requests.post(url, json=payload, timeout=current_timeout, stream=True)
             
             response.raise_for_status()
+            first_chunk = True
             
             for line in response.iter_lines():
                 if line:
@@ -278,9 +299,9 @@ class OllamaLLM:
                         data = json.loads(line)
                         content = self._extract_content(data)
                         
-                        if content and not self.model_loaded:
+                        if first_chunk and content:
                             self.model_loaded = True
-                            logger.info(f"Model {self.model} loaded successfully")
+                            first_chunk = False
 
                         if content:
                             yield content
@@ -290,7 +311,7 @@ class OllamaLLM:
                     except json.JSONDecodeError:
                         continue
         except requests.exceptions.Timeout:
-            error_msg = f"Streaming timed out after {current_timeout}s. Try again."
+            error_msg = f"Streaming request timed out after {current_timeout}s. Please try again."
             logger.error(error_msg)
             raise ValueError(error_msg)
         except requests.exceptions.HTTPError as e:
@@ -300,10 +321,12 @@ class OllamaLLM:
         except Exception as e:
             raise ValueError(f"Failed to stream: {str(e)}")
 
+# ============================================================================
+# CONFIGURATION MANAGER
+# ============================================================================
 
-# Configuration Manager
 class ConfigManager:
-    """Centralized configuration management."""
+    """Centralized configuration management"""
     
     DEFAULT_CONFIG = {
         'model': 'phi3',
@@ -311,7 +334,7 @@ class ConfigManager:
         'chunk_size': 1000,
         'chunk_overlap': 200,
         'temperature': 0.7,
-        'time_out': 120,
+        'timeout': 120,
         'cold_start_timeout': 600,
         'total_queries': 0
     }
@@ -322,19 +345,18 @@ class ConfigManager:
         self.load()
     
     def load(self) -> None:
-        """Load configuration from file."""
+        """Load configuration from file"""
         try:
             if self.config_file.exists():
                 with open(self.config_file, 'r') as f:
                     self.config.update(json.load(f))
-                logger.info(f"Loaded config: model={self.config['model']}")
             else:
                 self.save()
         except Exception as e:
-            logger.error(f"Error loading config: {e}, using defaults")
+            logger.error(f"Error loading config: {e}")
     
     def save(self) -> None:
-        """Save configuration to file."""
+        """Save configuration to file"""
         try:
             self.config_file.parent.mkdir(parents=True, exist_ok=True)
             with open(self.config_file, 'w') as f:
@@ -343,7 +365,7 @@ class ConfigManager:
             logger.error(f"Error saving config: {e}")
     
     def update(self, **kwargs) -> List[str]:
-        """Update configuration and return list of changed fields."""
+        """Update configuration and return list of changed fields"""
         changed = []
         for key, value in kwargs.items():
             if value is not None and key in self.config and self.config[key] != value:
@@ -356,18 +378,20 @@ class ConfigManager:
         return changed
     
     def get(self, key: str, default=None):
-        """Get configuration value."""
+        """Get configuration value"""
         return self.config.get(key, default)
     
     def increment_queries(self) -> None:
-        """Increment query counter."""
+        """Increment query counter"""
         self.config['total_queries'] += 1
         self.save()
 
+# ============================================================================
+# METADATA MANAGER
+# ============================================================================
 
-# Metadata Manager
 class MetadataManager:
-    """Manage document metadata."""
+    """Manage document metadata"""
     
     def __init__(self, metadata_file: Path = METADATA_FILE):
         self.metadata_file = metadata_file
@@ -375,12 +399,11 @@ class MetadataManager:
         self.load()
     
     def load(self) -> None:
-        """Load metadata from file."""
+        """Load metadata from file"""
         try:
             if self.metadata_file.exists():
                 with open(self.metadata_file, 'r') as f:
                     self.metadata = json.load(f)
-                logger.info(f"Loaded metadata for {len(self.metadata)} documents")
             else:
                 self.metadata = {}
         except Exception as e:
@@ -388,7 +411,7 @@ class MetadataManager:
             self.metadata = {}
     
     def save(self) -> None:
-        """Save metadata to file."""
+        """Save metadata to file"""
         try:
             self.metadata_file.parent.mkdir(parents=True, exist_ok=True)
             with open(self.metadata_file, 'w') as f:
@@ -397,12 +420,12 @@ class MetadataManager:
             logger.error(f"Error saving metadata: {e}")
     
     def add(self, filename: str, metadata: Dict[str, Any]) -> None:
-        """Add or update document metadata."""
+        """Add or update document metadata"""
         self.metadata[filename] = metadata
         self.save()
     
     def remove(self, filename: str) -> bool:
-        """Remove document metadata."""
+        """Remove document metadata"""
         if filename in self.metadata:
             del self.metadata[filename]
             self.save()
@@ -410,36 +433,37 @@ class MetadataManager:
         return False
     
     def get(self, filename: str) -> Optional[Dict[str, Any]]:
-        """Get document metadata."""
+        """Get document metadata"""
         return self.metadata.get(filename)
     
     def exists(self, filename: str) -> bool:
-        """Check if document exists."""
+        """Check if document exists"""
         return filename in self.metadata
     
     def clear(self) -> None:
-        """Clear all metadata."""
+        """Clear all metadata"""
         self.metadata = {}
         self.save()
     
     def list_all(self) -> List[Dict[str, Any]]:
-        """List all document metadata."""
+        """List all document metadata"""
         return list(self.metadata.values())
 
+# ============================================================================
+# MODEL MANAGER
+# ============================================================================
 
-# Model Manager
 class ModelManager:
-    """Manage LLM and embedding models."""
+    """Manage LLM and embedding models"""
     
     def __init__(self, config: ConfigManager):
         self.config = config
         self.embeddings_model: Optional[OllamaEmbeddings] = None
         self.llm_cache: Dict[str, OllamaLLM] = {}
-        self._embeddings_initialized = False
     
     def get_embeddings_model(self) -> OllamaEmbeddings:
-        """Get or create embeddings model with proper initialization test."""
-        if self.embeddings_model is None or not self._embeddings_initialized:
+        """Get or create embeddings model"""
+        if self.embeddings_model is None:
             model_name = self.config.get('embedding_model')
             logger.info(f"Initializing embeddings model: {model_name}")
             
@@ -449,26 +473,17 @@ class ModelManager:
                     base_url=OLLAMA_BASE_URL
                 )
                 
-                # CRITICAL FIX: Test the model with a simple embedding
-                # This prevents first-upload failures by warming up the model
-                logger.debug(f"Testing embeddings model: {model_name}")
-                test_embedding = self.embeddings_model.embed_query("initialization test")
-                
-                if not test_embedding or len(test_embedding) == 0:
-                    raise ValueError(f"Embeddings model returned empty result")
-                
-                self._embeddings_initialized = True
-                logger.info(f"Embeddings model '{model_name}' initialized and tested, dimensions: {len(test_embedding)}")
+                # Test the model with a simple embedding
+                test_embedding = self.embeddings_model.embed_query("test")
+                logger.info(f"Embeddings model '{model_name}' ready, dimensions: {len(test_embedding)}")
             except Exception as e:
-                self._embeddings_initialized = False
-                self.embeddings_model = None
-                logger.error(f"Failed to initialize embeddings model '{model_name}': {e}")
-                raise ValueError(f"Failed to initialize embeddings model '{model_name}': {str(e)}")
+                logger.error(f"Error initializing embeddings model '{model_name}': {e}")
+                raise ValueError(f"Failed to initialize embeddings model: {str(e)}")
         
         return self.embeddings_model
     
     def get_llm_model(self, model_name: Optional[str] = None, temperature: Optional[float] = None) -> OllamaLLM:
-        """Get or create LLM model."""
+        """Get or create LLM model"""
         model_to_use = model_name or self.config.get('model')
         
         if model_to_use not in self.llm_cache:
@@ -479,11 +494,10 @@ class ModelManager:
                     model=model_to_use,
                     base_url=OLLAMA_BASE_URL,
                     temperature=temperature or self.config.get('temperature'),
-                    timeout=self.config.get('time_out', 120),
+                    timeout=self.config.get('timeout', 120),
                     cold_start_timeout=self.config.get('cold_start_timeout', 600)
                 )
                 self.llm_cache[model_to_use] = llm
-                logger.info(f"LLM model '{model_to_use}' cached")
             except Exception as e:
                 logger.error(f"Error initializing LLM model '{model_to_use}': {e}")
                 raise ValueError(f"Failed to initialize LLM model: {str(e)}")
@@ -494,20 +508,19 @@ class ModelManager:
         return self.llm_cache[model_to_use]
     
     def reset_embeddings_model(self) -> None:
-        """Reset embeddings model."""
+        """Reset embeddings model"""
         self.embeddings_model = None
-        self._embeddings_initialized = False
-        logger.debug("Embeddings model reset")
     
     def reset_llm_cache(self) -> None:
-        """Reset LLM cache."""
+        """Reset LLM cache"""
         self.llm_cache.clear()
-        logger.debug("LLM cache cleared")
 
+# ============================================================================
+# DOCUMENT PROCESSOR
+# ============================================================================
 
-# Document Processor
 class DocumentProcessor:
-    """Handle document loading and processing."""
+    """Handle document loading and processing"""
     
     LOADERS = {
         '.pdf': PyPDFLoader,
@@ -519,7 +532,7 @@ class DocumentProcessor:
         self.config = config
     
     def load_document(self, file_path: Path) -> List[str]:
-        """Load document content based on file type."""
+        """Load document content based on file type"""
         suffix = file_path.suffix.lower()
         
         if suffix not in self.LOADERS:
@@ -529,11 +542,10 @@ class DocumentProcessor:
         documents = loader.load()
         content = [doc.page_content for doc in documents]
         
-        logger.debug(f"Loaded {len(content)} pages from {file_path}")
         return content
     
     def split_text(self, content: List[str], filename: str) -> List[Dict[str, Any]]:
-        """Split text content into chunks."""
+        """Split text content into chunks"""
         full_text = "\n\n".join(content)
         
         text_splitter = RecursiveCharacterTextSplitter(
@@ -560,10 +572,12 @@ class DocumentProcessor:
         logger.info(f"Split {filename} into {len(documents)} chunks")
         return documents
 
+# ============================================================================
+# UTILITY FUNCTIONS
+# ============================================================================
 
-# Utility Functions
 def clean_llm_response(text: str) -> str:
-    """Clean LLM response by removing reasoning tags."""
+    """Clean LLM response by removing reasoning tags"""
     patterns = [
         r'<think>.*?</think>',
         r'<reasoning>.*?</reasoning>',
@@ -579,7 +593,7 @@ def clean_llm_response(text: str) -> str:
 
 
 def get_available_models() -> tuple[List[str], List[str]]:
-    """Get available models from Ollama."""
+    """Get available models from Ollama"""
     try:
         response = requests.get(f"{OLLAMA_BASE_URL}/api/tags", timeout=10)
         
@@ -591,14 +605,14 @@ def get_available_models() -> tuple[List[str], List[str]]:
             llm_models = [m for m in all_models if m not in embedding_models]
             
             return llm_models, embedding_models
-    except Exception as e:
-        logger.debug(f"API-based model detection failed: {e}")
+    except Exception:
+        pass
     
     return ["phi3", "llama3", "mistral", "deepseek-r1"], ["nomic-embed-text"]
 
 
 def check_ollama_health() -> tuple[bool, str]:
-    """Check if Ollama is available."""
+    """Check if Ollama is available"""
     try:
         response = requests.get(f"{OLLAMA_BASE_URL}/api/tags", timeout=5)
         return response.status_code == 200, "Ollama available" if response.status_code == 200 else "Ollama not responding"
@@ -607,7 +621,7 @@ def check_ollama_health() -> tuple[bool, str]:
 
 
 def validate_file(filename: str, file_size: int) -> None:
-    """Validate uploaded file."""
+    """Validate uploaded file"""
     if Path(filename).suffix.lower() not in ALLOWED_EXTENSIONS:
         raise HTTPException(
             status_code=400,
@@ -620,57 +634,57 @@ def validate_file(filename: str, file_size: int) -> None:
             detail=f"File size ({file_size / (1024*1024):.1f} MB) exceeds max {MAX_FILE_SIZE_MB} MB"
         )
 
+# ============================================================================
+# INITIALIZE GLOBAL OBJECTS
+# ============================================================================
 
-# Initialize global objects
 config_manager = ConfigManager()
 metadata_manager = MetadataManager()
 vector_store = VectorStore()
 model_manager = ModelManager(config_manager)
 document_processor = DocumentProcessor(config_manager)
 
-# Create directories
 UPLOAD_DIR.mkdir(exist_ok=True)
 VECTOR_DIR.mkdir(exist_ok=True)
 
+# ============================================================================
+# FASTAPI APPLICATION
+# ============================================================================
 
-# Lifespan context manager
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Application lifespan manager."""
+    """Application lifespan manager"""
     logger.info("Starting RAG Application...")
+    
+    # Pre-initialize embeddings model to avoid first upload failure
+    try:
+        model_manager.get_embeddings_model()
+        logger.info("Embeddings model pre-initialized successfully")
+    except Exception as e:
+        logger.warning(f"Could not pre-initialize embeddings model: {e}")
     
     try:
         vector_store.load()
-        logger.info("Vector store loaded")
-        
-        # CRITICAL FIX: Pre-initialize embeddings model on startup
-        # This prevents first-upload failures
-        try:
-            model_manager.get_embeddings_model()
-            logger.info("Embeddings model pre-initialized successfully")
-        except Exception as e:
-            logger.warning(f"Could not pre-initialize embeddings model: {e}")
+        logger.info("Vector store loaded successfully")
     except Exception as e:
         logger.warning(f"Could not load vector store: {e}")
     
-    logger.info("RAG Application started")
+    logger.info("RAG Application started successfully")
     
     yield
     
     logger.info("Shutting down RAG Application...")
 
 
-# Initialize FastAPI app
 app = FastAPI(
     title="RAG Assistant API",
     description="Production-ready RAG system with Ollama",
-    version="2.1.0",
+    version="2.0.0",
     docs_url="/docs",
     redoc_url="/redoc",
     lifespan=lifespan
 )
 
-# Configure CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -679,12 +693,13 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-
-# API Endpoints
+# ============================================================================
+# API ENDPOINTS
+# ============================================================================
 
 @app.get("/health", tags=["Health"])
 async def health_check():
-    """Check system health and configuration."""
+    """Check system health and configuration"""
     try:
         ollama_available, ollama_message = check_ollama_health()
         stats = vector_store.get_stats()
@@ -718,7 +733,7 @@ async def health_check():
 
 @app.post("/upload", response_model=DocumentUploadResponse, tags=["Documents"])
 async def upload_document(file: UploadFile = File(...)):
-    """Upload and process a document."""
+    """Upload and process a document"""
     logger.info(f"Upload request: {file.filename}")
     
     content = await file.read()
@@ -735,32 +750,24 @@ async def upload_document(file: UploadFile = File(...)):
     file_path = UPLOAD_DIR / file.filename
     
     try:
-        # Save file
         with open(file_path, 'wb') as f:
             f.write(content)
         
-        # Load and process document
         document_content = document_processor.load_document(file_path)
         documents = document_processor.split_text(document_content, file.filename)
         
         if not documents:
             raise ValueError("No content extracted from document")
         
-        # CRITICAL FIX: Ensure embeddings model is initialized before generating embeddings
         embeddings_model = model_manager.get_embeddings_model()
-        
-        # Generate embeddings
         texts = [doc["page_content"] for doc in documents]
-        logger.debug(f"Generating embeddings for {len(texts)} chunks")
         embeddings = embeddings_model.embed_documents(texts)
         
         if not embeddings or len(embeddings) != len(documents):
-            raise ValueError(f"Embeddings generation failed: expected {len(documents)}, got {len(embeddings) if embeddings else 0}")
+            raise ValueError("Failed to generate embeddings")
         
-        # Add to vector store
         vector_store.add_documents(documents, embeddings)
         
-        # Save metadata
         metadata_manager.add(file.filename, {
             "filename": file.filename,
             "size": file_size,
@@ -785,7 +792,6 @@ async def upload_document(file: UploadFile = File(...)):
         logger.error(f"Error processing {file.filename}: {e}")
         logger.debug(traceback.format_exc())
         
-        # Cleanup on error
         if file_path.exists():
             file_path.unlink()
         metadata_manager.remove(file.filename)
@@ -795,7 +801,7 @@ async def upload_document(file: UploadFile = File(...)):
 
 @app.post("/query", tags=["Query"])
 async def query_documents(request: Request, query: QueryRequest):
-    """Query the document collection with streaming support."""
+    """Query the document collection with streaming support"""
     logger.info(f"Query: '{query.question[:50]}...'")
     start_time = datetime.now()
     
@@ -803,7 +809,6 @@ async def query_documents(request: Request, query: QueryRequest):
         if vector_store.get_stats().get("total_chunks", 0) == 0:
             raise HTTPException(status_code=400, detail="No documents available. Upload documents first.")
         
-        # Generate query embedding and search
         embeddings_model = model_manager.get_embeddings_model()
         query_embedding = embeddings_model.embed_query(query.question)
         similar_docs = vector_store.similarity_search(query_embedding, k=query.top_k)
@@ -811,7 +816,6 @@ async def query_documents(request: Request, query: QueryRequest):
         if not similar_docs:
             raise HTTPException(status_code=400, detail="No relevant documents found")
         
-        # Prepare context
         context_parts = []
         sources = []
         similarity_scores = []
@@ -823,10 +827,8 @@ async def query_documents(request: Request, query: QueryRequest):
         
         context = "\n\n".join(context_parts)
         
-        # Get LLM
         llm = model_manager.get_llm_model(query.model, query.temperature)
         
-        # Build prompt
         unique_sources = list(set(sources))
         doc_identity = unique_sources[0] if len(unique_sources) == 1 else "your documents"
         prompt = f"""You are {doc_identity}, a helpful document assistant. Respond in first person.
@@ -838,11 +840,9 @@ The user asks: {query.question}
 
 Respond naturally as the document. Your response:"""
         
-        # Handle streaming
         if query.stream:
             async def generate():
                 try:
-                    # Send metadata first
                     metadata = {
                         "sources": sources,
                         "chunks_used": len(similar_docs),
@@ -853,34 +853,29 @@ Respond naturally as the document. Your response:"""
                     }
                     yield f"data: {json.dumps(metadata)}\n\n"
 
-                    # Stream content
                     for chunk in llm.stream(prompt):
                         if await request.is_disconnected():
-                            logger.info("Client disconnected")
                             break
                         if chunk:
                             yield f"data: {json.dumps({'type': 'content', 'content': chunk})}\n\n"
 
-                    # Send completion
                     processing_time = (datetime.now() - start_time).total_seconds()
                     completion = {"type": "done", "processing_time": processing_time}
                     yield f"data: {json.dumps(completion)}\n\n"
                     
                     config_manager.increment_queries()
-                    logger.info(f"Streaming query completed in {processing_time:.2f}s")
+                    logger.info(f"Query completed in {processing_time:.2f}s")
                 except Exception as e:
                     logger.error(f"Streaming error: {e}")
                     yield f"data: {json.dumps({'type': 'error', 'error': str(e)})}\n\n"
             
             return StreamingResponse(generate(), media_type="text/event-stream")
         else:
-            # Non-streaming response
             answer = llm.invoke(prompt)
             answer = clean_llm_response(answer)
             
             processing_time = (datetime.now() - start_time).total_seconds()
             config_manager.increment_queries()
-            logger.info(f"Query completed in {processing_time:.2f}s")
             
             return {
                 "answer": answer,
@@ -894,21 +889,18 @@ Respond naturally as the document. Your response:"""
         raise
     except Exception as e:
         logger.error(f"Error processing query: {e}")
-        logger.debug(traceback.format_exc())
         raise HTTPException(status_code=500, detail=f"Failed to process query: {str(e)}")
 
 
 @app.get("/documents", response_model=List[DocumentInfo], tags=["Documents"])
 async def list_documents():
-    """List all uploaded documents."""
-    documents = [DocumentInfo(**meta) for meta in metadata_manager.list_all()]
-    logger.info(f"Listed {len(documents)} documents")
-    return documents
+    """List all uploaded documents"""
+    return [DocumentInfo(**meta) for meta in metadata_manager.list_all()]
 
 
 @app.delete("/documents/{filename}", tags=["Documents"])
 async def delete_document(filename: str):
-    """Delete a specific document."""
+    """Delete a specific document"""
     logger.info(f"Delete request: {filename}")
     
     if not metadata_manager.exists(filename):
@@ -933,9 +925,7 @@ async def delete_document(filename: str):
 
 @app.delete("/clear", tags=["Documents"])
 async def clear_all_documents():
-    """Clear all documents and embeddings."""
-    logger.info("Clear all documents request")
-    
+    """Clear all documents and embeddings"""
     try:
         vector_store.clear()
         metadata_manager.clear()
@@ -955,13 +945,10 @@ async def clear_all_documents():
 
 @app.post("/configure", tags=["Configuration"])
 async def configure_system(config_update: ModelConfig):
-    """Update system configuration."""
-    logger.info(f"Configuration update: {config_update.dict(exclude_none=True)}")
-    
+    """Update system configuration"""
     try:
         changed_fields = config_manager.update(**config_update.dict(exclude_none=True))
         
-        # Reset models if changed
         if "model" in changed_fields:
             model_manager.reset_llm_cache()
         
@@ -986,7 +973,7 @@ async def configure_system(config_update: ModelConfig):
 
 @app.get("/models", tags=["Configuration"])
 async def get_models():
-    """Get available models."""
+    """Get available models"""
     try:
         llm_models, embedding_models = get_available_models()
         
@@ -1001,7 +988,6 @@ async def get_models():
             }
         }
     except Exception as e:
-        logger.error(f"Error getting models: {e}")
         return {
             "ollama": {
                 "llm_models": ["phi3", "llama3", "mistral", "deepseek-r1"],
@@ -1016,7 +1002,7 @@ async def get_models():
 
 @app.get("/stats", tags=["Statistics"])
 async def get_statistics():
-    """Get system statistics."""
+    """Get system statistics"""
     try:
         stats = vector_store.get_stats()
         doc_count = len(metadata_manager.metadata)
@@ -1032,8 +1018,7 @@ async def get_statistics():
             "last_update": stats.get('last_update'),
             "vector_store_size_mb": round(stats.get('vector_store_size', 0) / (1024 * 1024), 2)
         }
-    except Exception as e:
-        logger.error(f"Error getting statistics: {e}")
+    except Exception:
         return {
             "total_documents": 0,
             "total_chunks": 0,
@@ -1045,7 +1030,7 @@ async def get_statistics():
 
 @app.post("/rebuild-vectors", tags=["Maintenance"])
 async def rebuild_vectors():
-    """Rebuild all vectors with current embedding model."""
+    """Rebuild all vectors with current embedding model"""
     logger.info("Rebuild vectors request")
     
     try:
@@ -1060,18 +1045,14 @@ async def rebuild_vectors():
                     results[filename] = {"success": False, "error": "File not found"}
                     continue
                 
-                # Load and process document
                 document_content = document_processor.load_document(file_path)
                 documents = document_processor.split_text(document_content, filename)
                 
-                # Generate embeddings
                 texts = [doc["page_content"] for doc in documents]
                 embeddings = embeddings_model.embed_documents(texts)
                 
-                # Add to vector store
                 vector_store.add_documents(documents, embeddings)
                 
-                # Update metadata
                 metadata = metadata_manager.get(filename) or {}
                 metadata["chunks"] = len(documents)
                 metadata_manager.add(filename, metadata)
