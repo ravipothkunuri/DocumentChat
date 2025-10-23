@@ -79,6 +79,18 @@ def apply_custom_css():
         transform: scale(1.05);
     }
     
+    /* Pulse animation for status indicator */
+    @keyframes pulse {
+        0%, 100% {
+            opacity: 1;
+            transform: scale(1);
+        }
+        50% {
+            opacity: 0.5;
+            transform: scale(1.1);
+        }
+    }
+    
     /* Loading animation */
     .loading-dots {
         display: inline-flex;
