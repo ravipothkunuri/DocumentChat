@@ -285,7 +285,9 @@ def init_session_state():
         'selected_document': None,
         'uploader_key': 0,
         'pending_toasts': [],
-        'last_uploaded_files': []
+        'last_uploaded_files': [],
+        'is_generating': False,
+        'stop_generation': False
     }
     for key, value in defaults.items():
         if key not in st.session_state:
@@ -463,15 +465,33 @@ def render_chat(api_client: RAGAPIClient, health_data: Dict, model: str):
         if not ollama.get('available'):
             ToastNotification.show("⚠️ Ollama unavailable", "warning")
     
+    # Display chat history
     for msg in get_current_chat():
         with st.chat_message(msg["role"]):
             st.markdown(msg["content"])
     
-    if prompt := st.chat_input(f"💭 Ask about {st.session_state.selected_document}..."):
+    # Show stop button if generating
+    if st.session_state.is_generating:
+        col1, col2, col3 = st.columns([1, 1, 1])
+        with col2:
+            if st.button("⏹️ Stop Generation", type="secondary", use_container_width=True, key="stop_btn"):
+                st.session_state.stop_generation = True
+                st.session_state.is_generating = False
+                ToastNotification.show("🛑 Generation stopped", "info")
+                st.rerun()
+    
+    # Chat input (disabled during generation)
+    if prompt := st.chat_input(
+        f"💭 Ask about {st.session_state.selected_document}...",
+        disabled=st.session_state.is_generating
+    ):
+        st.session_state.stop_generation = False
+        st.session_state.is_generating = True
         handle_query(prompt, api_client, model)
 
 def handle_query(prompt: str, api_client: RAGAPIClient, model: str):
-    """Handle chat query"""
+    """Handle chat query with stop capability"""
+    # Add user message
     add_message({
         "role": "user",
         "content": prompt,
@@ -481,6 +501,7 @@ def handle_query(prompt: str, api_client: RAGAPIClient, model: str):
     with st.chat_message("user"):
         st.markdown(prompt)
     
+    # Get response
     with st.chat_message("assistant"):
         placeholder = st.empty()
         placeholder.markdown(
@@ -490,9 +511,17 @@ def handle_query(prompt: str, api_client: RAGAPIClient, model: str):
         
         response = ""
         sources = []
+        stopped = False
         
         try:
             for data in api_client.query_stream(prompt, model=model):
+                # Check for stop signal
+                if st.session_state.stop_generation:
+                    stopped = True
+                    response += "\n\n[Generation stopped by user]"
+                    placeholder.markdown(response)
+                    break
+                
                 if data.get('type') == 'metadata':
                     sources = data.get('sources', [])
                 elif data.get('type') == 'content':
@@ -505,11 +534,13 @@ def handle_query(prompt: str, api_client: RAGAPIClient, model: str):
                     placeholder.error(error)
                     response = error
             
+            # Add message to chat history
             add_message({
                 "role": "assistant",
                 "content": response,
                 "sources": sources,
-                "timestamp": datetime.now().isoformat()
+                "timestamp": datetime.now().isoformat(),
+                "stopped": stopped
             })
         
         except Exception as e:
@@ -521,6 +552,11 @@ def handle_query(prompt: str, api_client: RAGAPIClient, model: str):
                 "sources": [],
                 "timestamp": datetime.now().isoformat()
             })
+        
+        finally:
+            # Reset generation state
+            st.session_state.is_generating = False
+            st.session_state.stop_generation = False
 
 # ============================================================================
 # MAIN
