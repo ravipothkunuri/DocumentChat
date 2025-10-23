@@ -284,7 +284,8 @@ def init_session_state():
         'document_chats': {},
         'selected_document': None,
         'uploader_key': 0,
-        'pending_toasts': []
+        'pending_toasts': [],
+        'last_uploaded_files': []
     }
     for key, value in defaults.items():
         if key not in st.session_state:
@@ -416,8 +417,17 @@ def render_sidebar(api_client: RAGAPIClient):
             key=f"uploader_{st.session_state.uploader_key}"
         )
         
+        # Auto-process files when uploaded
         if uploaded_files:
-            if st.button("🚀 Process Files", type="primary", use_container_width=True):
+            # Check if these are new files (not already processed)
+            if 'last_uploaded_files' not in st.session_state:
+                st.session_state.last_uploaded_files = []
+            
+            current_file_names = [f.name for f in uploaded_files]
+            
+            # Only process if file list has changed
+            if current_file_names != st.session_state.last_uploaded_files:
+                st.session_state.last_uploaded_files = current_file_names
                 upload_files(uploaded_files, api_client)
         
         if st.session_state.selected_document and get_current_chat():
