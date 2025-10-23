@@ -1,0 +1,33 @@
+# Test Document for RAG System
+
+## Introduction
+This is a test document to demonstrate the RAG (Retrieval-Augmented Generation) system functionality. 
+The document contains various sections with different types of information.
+
+## Features
+The RAG system includes:
+- Document upload and processing
+- PDF, TXT, and DOCX support
+- Vector embeddings generation
+- Semantic search capabilities
+- LLM-powered question answering
+- Streamlit-based user interface
+
+## Technical Details
+The system uses:
+- FastAPI for the backend API
+- Streamlit for the frontend
+- LangChain for RAG pipeline
+- Ollama for local LLM inference
+- Scikit-learn for vector similarity
+
+## Sample Data
+Here are some sample facts:
+1. The sky is blue during the day
+2. Water freezes at 0°C (32°F)
+3. Python is a programming language
+4. Machine learning is a subset of AI
+5. The Earth orbits around the Sun
+
+## Conclusion
+This test document helps verify that the document processing, chunking, and retrieval systems are working correctly.

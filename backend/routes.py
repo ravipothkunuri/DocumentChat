@@ -233,6 +233,38 @@ async def list_documents():
     return [DocumentInfo(**meta) for meta in metadata_manager.list_all()]
 
 
+@router.get("/documents/{filename}/details", tags=["Documents"])
+async def get_document_details(filename: str):
+    """Get detailed information about a specific document"""
+    if not metadata_manager.exists(filename):
+        raise HTTPException(status_code=404, detail=f"Document '{filename}' not found")
+    
+    try:
+        metadata = metadata_manager.get(filename)
+        chunks_info = vector_store.get_chunks_by_source(filename)
+        
+        chunk_lengths = [chunk["metadata"].get("chunk_length", 0) for chunk in chunks_info]
+        avg_chunk_length = sum(chunk_lengths) / len(chunk_lengths) if chunk_lengths else 0
+        
+        return {
+            "filename": metadata.get("filename"),
+            "type": metadata.get("type"),
+            "size": metadata.get("size"),
+            "size_mb": round(metadata.get("size", 0) / (1024 * 1024), 3),
+            "chunks": metadata.get("chunks"),
+            "status": metadata.get("status"),
+            "uploaded_at": metadata.get("uploaded_at"),
+            "average_chunk_length": round(avg_chunk_length, 2),
+            "total_chunk_length": sum(chunk_lengths),
+            "min_chunk_length": min(chunk_lengths) if chunk_lengths else 0,
+            "max_chunk_length": max(chunk_lengths) if chunk_lengths else 0,
+            "chunk_preview": chunks_info[0]["page_content"][:200] + "..." if chunks_info else ""
+        }
+    except Exception as e:
+        logger.error(f"Error getting details for {filename}: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to get document details: {str(e)}")
+
+
 @router.delete("/documents/{filename}", tags=["Documents"])
 async def delete_document(filename: str):
     """Delete a specific document"""

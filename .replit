@@ -26,37 +26,32 @@ args = "Frontend"
 name = "Backend"
 author = "agent"
 
-[[workflows.workflow.tasks]]
-task = "shell.exec"
-args = "python -m uvicorn rag_backend:app --host localhost --port 8000"
-waitForPort = 8000
-
 [workflows.workflow.metadata]
 outputType = "console"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "uv run python -m uvicorn rag_backend:app --host localhost --port 8000"
+waitForPort = 8000
 
 [[workflows.workflow]]
 name = "Frontend"
 author = "agent"
 
-[[workflows.workflow.tasks]]
-task = "shell.exec"
-args = "streamlit run frontend/app.py --server.port 5000 --server.address 0.0.0.0"
-waitForPort = 5000
-
 [workflows.workflow.metadata]
 outputType = "webview"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "uv run streamlit run frontend/app.py --server.port 5000 --server.address 0.0.0.0"
+waitForPort = 5000
 
 [[ports]]
 localPort = 5000
 externalPort = 80
 
 [[ports]]
-localPort = 8000
-externalPort = 8000
-exposeLocalhost = true
-
-[[ports]]
-localPort = 35657
+localPort = 38377
 externalPort = 3000
 
 [deployment]

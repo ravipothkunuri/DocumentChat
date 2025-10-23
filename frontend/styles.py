@@ -220,13 +220,47 @@ def apply_custom_css():
         }
     }
     
-    /* Document card hover effect */
+    /* Document card styling */
     button[key*="select_"] {
         transition: all 0.2s ease !important;
+        position: relative !important;
+        text-align: left !important;
     }
     
     button[key*="select_"]:hover {
         transform: translateX(4px) !important;
+    }
+    
+    /* Selected document highlight */
+    button[key*="select_"][kind="primary"] {
+        background: linear-gradient(135deg, rgba(102, 126, 234, 0.15) 0%, rgba(118, 75, 162, 0.15) 100%) !important;
+        border-left: 4px solid #667eea !important;
+        box-shadow: 0 2px 8px rgba(102, 126, 234, 0.2) !important;
+    }
+    
+    button[key*="select_"][kind="primary"]::before {
+        content: '' !important;
+        position: absolute !important;
+        left: 0 !important;
+        top: 0 !important;
+        bottom: 0 !important;
+        width: 4px !important;
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%) !important;
+    }
+    
+    /* Action buttons (Overview, Delete) */
+    button[key*="overview_"] {
+        background: rgba(59, 130, 246, 0.1) !important;
+        border: 2px solid rgba(59, 130, 246, 0.3) !important;
+        color: #3b82f6 !important;
+        font-size: 0.85rem !important;
+        padding: 0.5rem !important;
+        min-height: 36px !important;
+    }
+    
+    button[key*="overview_"]:hover {
+        background: rgba(59, 130, 246, 0.2) !important;
+        border-color: #3b82f6 !important;
     }
     
     /* Chat message styling */

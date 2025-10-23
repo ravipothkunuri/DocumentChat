@@ -11,3 +11,17 @@ scikit-learn>=1.7.2
 streamlit>=1.50.0
 uvicorn>=0.37.0
 unstructured>=0.10.0
+fastapi
+langchain
+langchain-community
+langchain-ollama
+langchain-text-splitters
+numpy
+pydantic
+pypdf
+python-multipart
+requests
+scikit-learn
+streamlit
+unstructured
+uvicorn

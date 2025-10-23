@@ -87,6 +87,15 @@ class VectorStore:
         logger.debug(f"Similarity search returned {len(results)} results")
         return results
     
+    def get_chunks_by_source(self, source: str) -> List[Dict[str, Any]]:
+        """Get all chunks from a specific source."""
+        chunks = [
+            doc for doc in self.documents
+            if doc.get('metadata', {}).get('source') == source
+        ]
+        logger.debug(f"Found {len(chunks)} chunks for source: {source}")
+        return chunks
+    
     def remove_documents_by_source(self, source: str) -> None:
         """Remove all documents from a specific source."""
         indices_to_remove = [

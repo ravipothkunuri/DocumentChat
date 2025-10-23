@@ -57,6 +57,10 @@ class RAGAPIClient:
         """Delete a specific document"""
         return self._request('DELETE', f'/documents/{filename}', timeout=30)
     
+    def get_document_details(self, filename: str) -> Tuple[int, Dict]:
+        """Get detailed information about a specific document"""
+        return self._request('GET', f'/documents/{filename}/details', timeout=10)
+    
     def query_stream(self, question: str, top_k: int = 4, model: str = None):
         """Stream query response"""
         try:

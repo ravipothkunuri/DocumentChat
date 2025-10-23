@@ -10,43 +10,64 @@ from session_state import (
 )
 from config import ALLOWED_EXTENSIONS, MAX_FILE_SIZE_MB, DEFAULT_LLM_MODEL
 from datetime import datetime
+from document_modal import show_document_overview
 
 
 def render_document_card(doc: Dict, api_client):
-    """Render clean document card"""
+    """Render improved document card with expandable actions"""
     doc_name = doc['filename']
     is_selected = st.session_state.selected_document == doc_name
     
+    if f'expanded_{doc_name}' not in st.session_state:
+        st.session_state[f'expanded_{doc_name}'] = False
+    
     with st.container():
-        col1, col2 = st.columns([4, 1])
-        
-        with col1:
-            if st.button(
-                f"{'📘' if is_selected else '📄'} {doc_name}",
-                key=f"select_{doc_name}",
-                use_container_width=True,
-                type="primary" if is_selected else "secondary",
-                disabled=st.session_state.is_generating,
-                help=f"{doc['chunks']} chunks • {doc['size'] / 1024:.1f} KB"
-            ):
+        if st.button(
+            f"{'📘' if is_selected else '📄'} {doc_name}",
+            key=f"select_{doc_name}",
+            use_container_width=True,
+            type="primary" if is_selected else "secondary",
+            disabled=st.session_state.is_generating,
+            help=f"{doc['chunks']} chunks • {doc['size'] / 1024:.1f} KB"
+        ):
+            if st.session_state.selected_document == doc_name:
+                st.session_state[f'expanded_{doc_name}'] = not st.session_state[f'expanded_{doc_name}']
+            else:
                 st.session_state.selected_document = doc_name
-                st.rerun()
+                for key in list(st.session_state.keys()):
+                    if key.startswith('expanded_') and key != f'expanded_{doc_name}':
+                        st.session_state[key] = False
+                st.session_state[f'expanded_{doc_name}'] = True
+            st.rerun()
         
-        with col2:
-            if st.button("🗑️", key=f"delete_{doc_name}", 
-                       help="Delete",
-                       disabled=st.session_state.is_generating):
-                status_code, response = api_client.delete_document(doc_name)
-                if status_code == 200:
-                    if doc_name in st.session_state.document_chats:
-                        del st.session_state.document_chats[doc_name]
-                    if st.session_state.selected_document == doc_name:
-                        st.session_state.selected_document = None
-                    
-                    ToastNotification.show(f"Deleted {doc_name}", "success")
-                    st.rerun()
-                else:
-                    ToastNotification.show(f"{response.get('message', 'Failed')}", "error")
+        if st.session_state[f'expanded_{doc_name}']:
+            action_col1, action_col2 = st.columns(2)
+            
+            with action_col1:
+                if st.button("📊 Overview", key=f"overview_{doc_name}", 
+                           use_container_width=True,
+                           disabled=st.session_state.is_generating):
+                    status_code, details = api_client.get_document_details(doc_name)
+                    if status_code == 200:
+                        show_document_overview(details)
+                    else:
+                        ToastNotification.show("Failed to load details", "error")
+            
+            with action_col2:
+                if st.button("🗑️ Delete", key=f"delete_{doc_name}", 
+                           use_container_width=True,
+                           disabled=st.session_state.is_generating):
+                    status_code, response = api_client.delete_document(doc_name)
+                    if status_code == 200:
+                        if doc_name in st.session_state.document_chats:
+                            del st.session_state.document_chats[doc_name]
+                        if st.session_state.selected_document == doc_name:
+                            st.session_state.selected_document = None
+                        
+                        ToastNotification.show(f"Deleted {doc_name}", "success")
+                        st.rerun()
+                    else:
+                        ToastNotification.show(f"{response.get('message', 'Failed')}", "error")
 
 
 def render_conversation_history():
