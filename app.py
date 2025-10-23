@@ -132,7 +132,7 @@ class ToastNotification:
         
         for toast in st.session_state.pending_toasts:
             icon = icon_map.get(toast['type'], "ℹ️")
-            st.toast(f"{icon} {toast['message']}", icon=icon)
+            st.toast(f"{toast['message']}", icon=icon)
         
         # Clear the queue
         st.session_state.pending_toasts = []
@@ -348,10 +348,10 @@ def render_document_card(doc: Dict, api_client: RAGAPIClient):
                 if st.session_state.selected_document == doc_name:
                     st.session_state.selected_document = None
                 
-                ToastNotification.show(f"✅ Deleted {doc_name}", "success")
+                ToastNotification.show(f"Deleted {doc_name}", "success")
                 st.rerun()
             else:
-                ToastNotification.show(f"❌ {response.get('message', 'Delete failed')}", "error")
+                ToastNotification.show(f"{response.get('message', 'Delete failed')}", "error")
     
     if is_selected:
         st.caption(f"📊 {doc['chunks']} chunks • {doc['size']:,} bytes • {doc['type'].upper()}")
@@ -359,8 +359,6 @@ def render_document_card(doc: Dict, api_client: RAGAPIClient):
             msg_count = len(st.session_state.document_chats[doc_name])
             if msg_count > 0:
                 st.caption(f"💬 {msg_count} messages")
-    
-    st.markdown("---")
 
 def upload_files(files: List, api_client: RAGAPIClient):
     """Handle file upload"""
@@ -372,11 +370,11 @@ def upload_files(files: List, api_client: RAGAPIClient):
         status_code, response = api_client.upload_file(file)
         
         if status_code == 200:
-            ToastNotification.show(f"✅ {file.name}: {response.get('chunks', 0)} chunks", "success")
+            ToastNotification.show(f"{file.name}: {response.get('chunks', 0)} chunks", "success")
             success_count += 1
             uploaded_names.append(file.name)
         else:
-            ToastNotification.show(f"❌ {file.name}: {response.get('message', 'Failed')}", "error")
+            ToastNotification.show(f"{file.name}: {response.get('message', 'Failed')}", "error")
         
         progress.progress((i + 1) / len(files))
     
@@ -392,14 +390,10 @@ def upload_files(files: List, api_client: RAGAPIClient):
 
 def render_sidebar(api_client: RAGAPIClient):
     """Render sidebar"""
-    with st.sidebar:
-        st.markdown('<h1 class="main-header">📚 RAG Assistant</h1>', unsafe_allow_html=True)
-        
+    with st.sidebar:        
         documents = api_client.get_documents()
         if documents:
             st.info(f"📊 {len(documents)} document(s) loaded")
-        
-        st.markdown("---")
         st.subheader("📖 Your Documents")
         
         if documents:
@@ -463,7 +457,7 @@ def render_chat(api_client: RAGAPIClient, health_data: Dict, model: str):
     if health_data:
         ollama = health_data.get('ollama_status', {})
         if not ollama.get('available'):
-            ToastNotification.show("⚠️ Ollama unavailable", "warning")
+            ToastNotification.show("Ollama unavailable", "warning")
     
     # Display chat history
     for msg in get_current_chat():
