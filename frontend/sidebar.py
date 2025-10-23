@@ -14,7 +14,7 @@ from document_modal import show_document_overview
 
 
 def render_document_card(doc: Dict, api_client):
-    """Render improved document card with expandable actions"""
+    """Render improved document card with better selection UI"""
     doc_name = doc['filename']
     is_selected = st.session_state.selected_document == doc_name
     
@@ -22,24 +22,46 @@ def render_document_card(doc: Dict, api_client):
         st.session_state[f'expanded_{doc_name}'] = False
     
     with st.container():
-        if st.button(
-            f"{'📘' if is_selected else '📄'} {doc_name}",
-            key=f"select_{doc_name}",
-            use_container_width=True,
-            type="primary" if is_selected else "secondary",
-            disabled=st.session_state.is_generating,
-            help=f"{doc['chunks']} chunks • {doc['size'] / 1024:.1f} KB"
-        ):
-            if st.session_state.selected_document == doc_name:
-                st.session_state[f'expanded_{doc_name}'] = not st.session_state[f'expanded_{doc_name}']
-            else:
-                st.session_state.selected_document = doc_name
-                for key in list(st.session_state.keys()):
-                    if key.startswith('expanded_') and key != f'expanded_{doc_name}':
-                        st.session_state[key] = False
-                st.session_state[f'expanded_{doc_name}'] = True
-            st.rerun()
+        # Main document button
+        col_doc, col_expand = st.columns([5, 1])
         
+        with col_doc:
+            if st.button(
+                f"{'✅' if is_selected else '📄'} {doc_name}",
+                key=f"select_{doc_name}",
+                use_container_width=True,
+                type="primary" if is_selected else "secondary",
+                disabled=st.session_state.is_generating,
+                help=f"{doc['chunks']} chunks • {doc['size'] / 1024:.1f} KB"
+            ):
+                # Toggle selection
+                if st.session_state.selected_document == doc_name:
+                    # Deselect if clicking the selected document
+                    st.session_state.selected_document = None
+                    st.session_state[f'expanded_{doc_name}'] = False
+                    ToastNotification.show("Document deselected", "info")
+                else:
+                    # Select this document
+                    st.session_state.selected_document = doc_name
+                    for key in list(st.session_state.keys()):
+                        if isinstance(key, str) and key.startswith('expanded_') and key != f'expanded_{doc_name}':
+                            st.session_state[key] = False
+                    ToastNotification.show(f"Selected: {doc_name}", "success")
+                st.rerun()
+        
+        with col_expand:
+            expand_icon = "▼" if st.session_state[f'expanded_{doc_name}'] else "▶"
+            if st.button(
+                expand_icon,
+                key=f"expand_{doc_name}",
+                use_container_width=True,
+                help="Show actions",
+                disabled=st.session_state.is_generating
+            ):
+                st.session_state[f'expanded_{doc_name}'] = not st.session_state[f'expanded_{doc_name}']
+                st.rerun()
+        
+        # Expandable actions
         if st.session_state[f'expanded_{doc_name}']:
             action_col1, action_col2 = st.columns(2)
             
@@ -171,49 +193,51 @@ def render_model_selector(api_client):
 
 
 def render_sidebar(api_client):
-    """Render clean sidebar"""
+    """Render clean sidebar with separate sections"""
     with st.sidebar:
         render_model_selector(api_client)
         st.markdown("---")
         
-        tab1, tab2 = st.tabs(["📚 Documents", "💬 History"])
+        # Documents Section
+        st.subheader("📚 Documents")
+        documents = api_client.get_documents()
         
-        with tab1:
-            documents = api_client.get_documents()
-            
-            if documents:
-                st.caption(f"{len(documents)} document(s)")
-                for doc in documents:
-                    render_document_card(doc, api_client)
-            else:
-                st.info("No documents yet")
-            
-            st.markdown("---")
-            st.subheader("📤 Upload")
-            
-            uploaded_files = st.file_uploader(
-                "Choose files",
-                type=ALLOWED_EXTENSIONS,
-                accept_multiple_files=True,
-                help=f"{', '.join(ALLOWED_EXTENSIONS).upper()} (max {MAX_FILE_SIZE_MB}MB)",
-                key=f"uploader_{st.session_state.uploader_key}",
-                disabled=st.session_state.is_generating,
-                label_visibility="collapsed"
-            )
-            
-            if uploaded_files:
-                if 'last_uploaded_files' not in st.session_state:
-                    st.session_state.last_uploaded_files = []
-                
-                current_file_names = [f.name for f in uploaded_files]
-                
-                if current_file_names != st.session_state.last_uploaded_files:
-                    st.session_state.last_uploaded_files = current_file_names
-                    upload_files(uploaded_files, api_client)
+        if documents:
+            st.caption(f"{len(documents)} document(s)")
+            for doc in documents:
+                render_document_card(doc, api_client)
+        else:
+            st.info("No documents yet")
         
-        with tab2:
-            render_conversation_history()
+        st.markdown("---")
+        st.subheader("📤 Upload")
         
+        uploaded_files = st.file_uploader(
+            "Choose files",
+            type=ALLOWED_EXTENSIONS,
+            accept_multiple_files=True,
+            help=f"{', '.join(ALLOWED_EXTENSIONS).upper()} (max {MAX_FILE_SIZE_MB}MB)",
+            key=f"uploader_{st.session_state.uploader_key}",
+            disabled=st.session_state.is_generating,
+            label_visibility="collapsed"
+        )
+        
+        if uploaded_files:
+            if 'last_uploaded_files' not in st.session_state:
+                st.session_state.last_uploaded_files = []
+            
+            current_file_names = [f.name for f in uploaded_files]
+            
+            if current_file_names != st.session_state.last_uploaded_files:
+                st.session_state.last_uploaded_files = current_file_names
+                upload_files(uploaded_files, api_client)
+        
+        # History Section
+        st.markdown("---")
+        st.subheader("💬 Conversation History")
+        render_conversation_history()
+        
+        # Clear Chat button
         if st.session_state.selected_document and get_current_chat():
             st.markdown("---")
             if st.button("🗑️ Clear Chat", use_container_width=True, 

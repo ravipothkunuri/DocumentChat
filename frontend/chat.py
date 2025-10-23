@@ -99,6 +99,9 @@ def render_source_citations(sources: list, similarity_scores: list = None):
     if not sources:
         return
     
+    if similarity_scores is None:
+        similarity_scores = []
+    
     unique_sources = list(dict.fromkeys(sources))  # Preserve order, remove duplicates
     
     with st.expander(f"📚 Sources ({len(unique_sources)})", expanded=False):
@@ -181,7 +184,7 @@ def render_chat(api_client, health_data: Dict, model: str):
             if msg["role"] == "assistant" and msg.get("sources"):
                 render_source_citations(
                     msg.get("sources", []),
-                    msg.get("similarity_scores")
+                    msg.get("similarity_scores", [])
                 )
             
             if msg.get("stopped"):

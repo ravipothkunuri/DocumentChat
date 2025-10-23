@@ -37,20 +37,27 @@ if not is_healthy:
 # Render pending toasts
 ToastNotification.render_pending()
 
-# Show onboarding for first-time users
-if st.session_state.get('show_onboarding', True):
-    render_onboarding()
-
 # Header
 st.markdown('<div class="main-header">📚 RAG Chat Assistant</div>', unsafe_allow_html=True)
-
-# Show quick start if no documents and onboarding dismissed
-if health_data and health_data.get('document_count', 0) == 0 and not st.session_state.get('show_onboarding', True):
-    render_quick_start_card()
 
 # Sidebar
 render_sidebar(api_client)
 
+# Show onboarding for first-time users or when no document is selected
+document_count = health_data.get('document_count', 0) if health_data else 0
+has_selected_document = st.session_state.selected_document is not None
+
+# Show onboarding if: first time OR (has documents but none selected)
+show_onboarding_now = st.session_state.get('show_onboarding', True)
+if show_onboarding_now or (document_count > 0 and not has_selected_document):
+    render_onboarding()
+elif document_count == 0:
+    # Show quick start if no documents uploaded yet
+    render_quick_start_card()
+
 # Main chat interface
 model = st.session_state.get('current_model', DEFAULT_LLM_MODEL)
-render_chat(api_client, health_data, model)
+if health_data:
+    render_chat(api_client, health_data, model)
+else:
+    st.warning("⚠️ Unable to connect to backend")
