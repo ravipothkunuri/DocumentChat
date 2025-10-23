@@ -25,7 +25,8 @@ def render_custom_chat_input():
             key="custom_chat_input",
             placeholder=f"💭 Ask about {st.session_state.selected_document}...",
             label_visibility="collapsed",
-            height=80
+            height=80,
+            disabled=st.session_state.is_generating  # Disable during generation
         )
     
     with col2:
@@ -83,7 +84,39 @@ def render_chat(api_client, health_data: Dict, model: str):
             if msg.get("stopped"):
                 st.caption("⚠️ Generation was stopped")
     
-    # Process pending query if exists
+    # Custom chat input with integrated send/stop button (ALWAYS RENDER)
+    st.markdown("---")
+    
+    # Status indicator (only when generating)
+    if st.session_state.is_generating:
+        st.markdown(
+            '<p style="text-align: center; color: #ef4444; font-size: 0.875rem; margin-bottom: 0.5rem;">'
+            '<span style="display: inline-block; width: 8px; height: 8px; background: #ef4444; border-radius: 50%; margin-right: 6px; animation: pulse 2s infinite;"></span>'
+            '<strong>Generating...</strong> Click ⬛ to stop'
+            '</p>', 
+            unsafe_allow_html=True
+        )
+    
+    # Render chat input (moved before generation logic)
+    prompt = render_custom_chat_input()
+    
+    # Handle new prompt
+    if prompt:
+        # Add user message
+        add_message({
+            "role": "user",
+            "content": prompt,
+            "timestamp": datetime.now().isoformat()
+        })
+        
+        # Start generation
+        st.session_state.pending_query = prompt
+        st.session_state.pending_model = model
+        st.session_state.is_generating = True
+        st.session_state.stop_generation = False
+        st.rerun()
+    
+    # Process pending query if exists (moved after input rendering)
     if st.session_state.pending_query and st.session_state.is_generating:
         prompt = st.session_state.pending_query
         model_to_use = st.session_state.pending_model or model
@@ -161,33 +194,3 @@ def render_chat(api_client, health_data: Dict, model: str):
                 if 'custom_chat_input' in st.session_state:
                     st.session_state.custom_chat_input = ""
                 st.rerun()
-    
-    # Custom chat input with integrated send/stop button
-    st.markdown("---")
-    
-    # Status indicator (only when generating)
-    if st.session_state.is_generating:
-        st.markdown(
-            '<p style="text-align: center; color: #ef4444; font-size: 0.875rem; margin-bottom: 0.5rem;">'
-            '<span style="display: inline-block; width: 8px; height: 8px; background: #ef4444; border-radius: 50%; margin-right: 6px; animation: pulse 2s infinite;"></span>'
-            '<strong>Generating...</strong> Click ⬛ to stop'
-            '</p>', 
-            unsafe_allow_html=True
-        )
-    
-    prompt = render_custom_chat_input()
-    
-    if prompt:
-        # Add user message
-        add_message({
-            "role": "user",
-            "content": prompt,
-            "timestamp": datetime.now().isoformat()
-        })
-        
-        # Start generation
-        st.session_state.pending_query = prompt
-        st.session_state.pending_model = model
-        st.session_state.is_generating = True
-        st.session_state.stop_generation = False
-        st.rerun()
