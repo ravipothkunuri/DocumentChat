@@ -149,9 +149,15 @@ def upload_files(files: List, api_client):
     """Handle file upload"""
     success_count = 0
     uploaded_names = []
-    progress = st.progress(0)
+    
+    # Create progress bar and status text placeholders
+    progress_bar = st.progress(0)
+    status_text = st.empty()
     
     for i, file in enumerate(files):
+        # Show current file being processed
+        status_text.text(f"Uploading {i + 1}/{len(files)}: {file.name}")
+        
         status_code, response = api_client.upload_file(file)
         
         if status_code == 200:
@@ -161,7 +167,16 @@ def upload_files(files: List, api_client):
         else:
             ToastNotification.show(f"{file.name}: {response.get('message', 'Failed')}", "error")
         
-        progress.progress((i + 1) / len(files))
+        # Update progress
+        progress_bar.progress((i + 1) / len(files))
+    
+    # Clear status and progress after completion
+    status_text.empty()
+    progress_bar.empty()
+    
+    # Show completion message
+    if success_count > 0:
+        st.success(f"✅ Uploaded {success_count}/{len(files)} file(s) successfully")
     
     if uploaded_names and not st.session_state.selected_document:
         st.session_state.selected_document = uploaded_names[0]
