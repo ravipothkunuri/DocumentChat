@@ -104,11 +104,25 @@ class RAGAPIClient:
 # ============================================================================
 
 class ToastNotification:
-    """Independent toast notification system using Streamlit's native toast"""
+    """Independent toast notification system using session state flags"""
     
     @staticmethod
     def show(message: str, toast_type: str = "info"):
-        """Show a toast notification using Streamlit's native toast"""
+        """Queue a toast notification to be displayed after rerun"""
+        if 'pending_toasts' not in st.session_state:
+            st.session_state.pending_toasts = []
+        
+        st.session_state.pending_toasts.append({
+            'message': message,
+            'type': toast_type
+        })
+    
+    @staticmethod
+    def render_pending():
+        """Render all pending toasts and clear the queue"""
+        if 'pending_toasts' not in st.session_state or not st.session_state.pending_toasts:
+            return
+        
         icon_map = {
             "success": "✅",
             "error": "❌",
@@ -116,8 +130,12 @@ class ToastNotification:
             "info": "ℹ️"
         }
         
-        icon = icon_map.get(toast_type, "ℹ️")
-        st.toast(f"{icon} {message}", icon=icon_map.get(toast_type, "ℹ️"))
+        for toast in st.session_state.pending_toasts:
+            icon = icon_map.get(toast['type'], "ℹ️")
+            st.toast(f"{icon} {toast['message']}", icon=icon)
+        
+        # Clear the queue
+        st.session_state.pending_toasts = []
 
 # ============================================================================
 # UI STYLING
@@ -265,7 +283,8 @@ def init_session_state():
     defaults = {
         'document_chats': {},
         'selected_document': None,
-        'uploader_key': 0
+        'uploader_key': 0,
+        'pending_toasts': []
     }
     for key, value in defaults.items():
         if key not in st.session_state:
@@ -508,6 +527,9 @@ def main():
     
     apply_custom_css()
     init_session_state()
+    
+    # Render pending toasts at the start of each render
+    ToastNotification.render_pending()
     
     api_client = RAGAPIClient(API_BASE_URL)
     
