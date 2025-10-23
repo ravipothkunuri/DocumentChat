@@ -129,45 +129,32 @@ class ToastNotification:
     
     @staticmethod
     def render_all():
-        """Render all queued toasts and auto-clear old ones"""
+        """Render all queued toasts with auto-cleanup"""
         if 'toast_queue' not in st.session_state:
             st.session_state.toast_queue = []
             return
         
-        # Remove toasts older than 3.5 seconds
+        # Remove toasts older than 4 seconds (server-side cleanup only)
         current_time = time.time()
         st.session_state.toast_queue = [
             toast for toast in st.session_state.toast_queue 
-            if current_time - toast['timestamp'] < 3.5
+            if current_time - toast['timestamp'] < 4.0
         ]
         
         if not st.session_state.toast_queue:
             return
         
         toasts_html = ""
+        toast_scripts = []
         
         for i, toast in enumerate(st.session_state.toast_queue):
             bg_color, text_color, border_color = ToastNotification.COLORS.get(
                 toast['type'], ToastNotification.COLORS["info"]
             )
             
-            # Calculate age and opacity
-            age = current_time - toast['timestamp']
-            
-            # Fade out in the last 0.5 seconds
-            if age > 3.0:
-                opacity = 1 - ((age - 3.0) / 0.5)
-                transform = f"translateX({(age - 3.0) * 800}px)"
-            else:
-                opacity = 1
-                transform = "translateX(0)"
-            
             # Stack toasts vertically with offset
             top_position = 80 + (i * 90)
             toast_id = f"toast-{toast['id']}"
-            
-            # Progress percentage
-            progress = max(0, 100 - (age / 3.0 * 100))
             
             toasts_html += f"""
                 <div id="{toast_id}" style="
@@ -185,10 +172,7 @@ class ToastNotification:
                     max-width: 400px;
                     font-weight: 500;
                     overflow: hidden;
-                    opacity: {opacity};
-                    transform: {transform};
-                    transition: opacity 0.3s ease, transform 0.3s ease;
-                    cursor: pointer;
+                    animation: slideIn 0.3s ease-out;
                 ">
                     <div style="margin-bottom: 8px;">{toast['message']}</div>
                     <div style="
@@ -198,22 +182,90 @@ class ToastNotification:
                         overflow: hidden;
                         margin: 0 -20px -14px -20px;
                     ">
-                        <div style="
+                        <div id="{toast_id}-progress" style="
                             height: 100%;
                             background: {border_color};
-                            width: {progress}%;
-                            transition: width 0.1s linear;
+                            width: 100%;
+                            transition: width 0.05s linear;
                         "></div>
                     </div>
                 </div>
             """
+            
+            toast_scripts.append(f"""
+                (function() {{
+                    const toast = document.getElementById('{toast_id}');
+                    const progress = document.getElementById('{toast_id}-progress');
+                    if (!toast || !progress) return;
+                    
+                    let startTime = Date.now();
+                    const duration = 3000;
+                    
+                    function updateProgress() {{
+                        const elapsed = Date.now() - startTime;
+                        const remaining = Math.max(0, 100 - (elapsed / duration * 100));
+                        
+                        if (progress) {{
+                            progress.style.width = remaining + '%';
+                        }}
+                        
+                        if (elapsed >= duration) {{
+                            toast.style.animation = 'slideOut 0.3s ease-in forwards';
+                            setTimeout(() => {{
+                                if (toast && toast.parentNode) {{
+                                    toast.remove();
+                                }}
+                            }}, 300);
+                        }} else {{
+                            requestAnimationFrame(updateProgress);
+                        }}
+                    }}
+                    
+                    requestAnimationFrame(updateProgress);
+                    
+                    // Click to dismiss
+                    toast.style.cursor = 'pointer';
+                    toast.addEventListener('click', function() {{
+                        toast.style.animation = 'slideOut 0.3s ease-in forwards';
+                        setTimeout(() => {{
+                            if (toast && toast.parentNode) {{
+                                toast.remove();
+                            }}
+                        }}, 300);
+                    }});
+                }})();
+            """)
         
-        st.markdown(toasts_html, unsafe_allow_html=True)
+        all_scripts = "\n".join(toast_scripts)
         
-        # Auto-rerun to update toasts if any are visible
-        if st.session_state.toast_queue:
-            time.sleep(0.1)
-            st.rerun()
+        st.markdown(f"""
+            {toasts_html}
+            <style>
+                @keyframes slideIn {{
+                    from {{
+                        transform: translateX(400px);
+                        opacity: 0;
+                    }}
+                    to {{
+                        transform: translateX(0);
+                        opacity: 1;
+                    }}
+                }}
+                @keyframes slideOut {{
+                    from {{
+                        transform: translateX(0);
+                        opacity: 1;
+                    }}
+                    to {{
+                        transform: translateX(400px);
+                        opacity: 0;
+                    }}
+                }}
+            </style>
+            <script>
+                {all_scripts}
+            </script>
+        """, unsafe_allow_html=True)
 
 # ============================================================================
 # UI STYLING
