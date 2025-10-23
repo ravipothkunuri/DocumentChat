@@ -14,9 +14,7 @@ def init_session_state():
         'pending_toasts': [],
         'last_uploaded_files': [],
         'is_generating': False,
-        'stop_generation': False,
-        'pending_query': None,
-        'pending_model': None
+        'stop_generation': False
     }
     for key, value in defaults.items():
         if key not in st.session_state:
