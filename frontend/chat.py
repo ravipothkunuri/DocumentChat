@@ -1,5 +1,5 @@
 """
-Chat interface components - Claude-style with clean send/stop toggle
+Chat interface components - Using Streamlit's native chat input with stop detection
 """
 import streamlit as st
 from datetime import datetime
@@ -8,54 +8,8 @@ from session_state import get_current_chat, add_message
 from toast import ToastNotification
 
 
-def handle_stop_generation():
-    """Callback for stop button"""
-    st.session_state.stop_generation = True
-
-
-def render_custom_chat_input():
-    """Render custom chat input with integrated send/stop button"""
-    
-    # Use columns to create the input layout
-    col1, col2 = st.columns([10, 1])
-    
-    with col1:
-        user_input = st.text_area(
-            "Message",
-            key="custom_chat_input",
-            placeholder=f"💭 Ask about {st.session_state.selected_document}...",
-            label_visibility="collapsed",
-            height=80,
-            disabled=st.session_state.is_generating  # Disable during generation
-        )
-    
-    with col2:
-        if st.session_state.is_generating:
-            # Show stop button during generation
-            if st.button(
-                "⬛",
-                key="stop_btn_inline",
-                help="Stop generation",
-                use_container_width=True
-            ):
-                handle_stop_generation()
-                st.rerun()
-        else:
-            # Show send button normally
-            if st.button(
-                "➤",
-                key="send_btn_inline",
-                help="Send message (Ctrl+Enter)",
-                use_container_width=True
-            ):
-                if user_input and user_input.strip():
-                    return user_input.strip()
-    
-    return None
-
-
 def render_chat(api_client, health_data: Dict, model: str):
-    """Render chat interface"""
+    """Render chat interface with native Streamlit components"""
     
     if health_data and health_data.get('document_count', 0) == 0:
         st.info("👋 **Welcome!** Upload documents to start.")
@@ -84,21 +38,11 @@ def render_chat(api_client, health_data: Dict, model: str):
             if msg.get("stopped"):
                 st.caption("⚠️ Generation was stopped")
     
-    # Custom chat input with integrated send/stop button (ALWAYS RENDER)
-    st.markdown("---")
-    
-    # Status indicator (only when generating)
-    if st.session_state.is_generating:
-        st.markdown(
-            '<p style="text-align: center; color: #ef4444; font-size: 0.875rem; margin-bottom: 0.5rem;">'
-            '<span style="display: inline-block; width: 8px; height: 8px; background: #ef4444; border-radius: 50%; margin-right: 6px; animation: pulse 2s infinite;"></span>'
-            '<strong>Generating...</strong> Click ⬛ to stop'
-            '</p>', 
-            unsafe_allow_html=True
-        )
-    
-    # Render chat input (moved before generation logic)
-    prompt = render_custom_chat_input()
+    # Use native Streamlit chat input
+    prompt = st.chat_input(
+        f"💭 Ask about {st.session_state.selected_document}...",
+        disabled=st.session_state.is_generating
+    )
     
     # Handle new prompt
     if prompt:
@@ -109,25 +53,13 @@ def render_chat(api_client, health_data: Dict, model: str):
             "timestamp": datetime.now().isoformat()
         })
         
-        # Start generation
-        st.session_state.pending_query = prompt
-        st.session_state.pending_model = model
-        st.session_state.is_generating = True
-        st.session_state.stop_generation = False
-        st.rerun()
-    
-    # Process pending query if exists (moved after input rendering)
-    if st.session_state.pending_query and st.session_state.is_generating:
-        prompt = st.session_state.pending_query
-        model_to_use = st.session_state.pending_model or model
+        # Display user message immediately
+        with st.chat_message("user"):
+            st.markdown(prompt)
         
         # Generate response
         with st.chat_message("assistant"):
             response_placeholder = st.empty()
-            response_placeholder.markdown(
-                '<div class="loading-dots"><div class="dot"></div><div class="dot"></div><div class="dot"></div></div>',
-                unsafe_allow_html=True
-            )
             
             response = ""
             sources = []
@@ -135,15 +67,12 @@ def render_chat(api_client, health_data: Dict, model: str):
             error_occurred = False
             
             try:
-                for data in api_client.query_stream(prompt, model=model_to_use):
-                    if st.session_state.stop_generation:
-                        stopped = True
-                        if response:
-                            response += "\n\n*[Generation stopped by user]*"
-                        else:
-                            response = "*[Generation stopped before content was generated]*"
-                        response_placeholder.markdown(response)
-                        break
+                # Set generating flag
+                st.session_state.is_generating = True
+                
+                for data in api_client.query_stream(prompt, model=model):
+                    # Check if user clicked Streamlit's stop button
+                    # This will raise a StreamlitAPIException when stop is clicked
                     
                     if data.get('type') == 'metadata':
                         sources = data.get('sources', [])
@@ -163,6 +92,24 @@ def render_chat(api_client, health_data: Dict, model: str):
                 if response and not error_occurred:
                     response_placeholder.markdown(response)
                 
+            except st.runtime.scriptrunner.StopException:
+                # Streamlit stop button was clicked
+                stopped = True
+                if response:
+                    response += "\n\n*[Generation stopped by user]*"
+                else:
+                    response = "*[Generation stopped before content was generated]*"
+                response_placeholder.markdown(response)
+                ToastNotification.show("Generation stopped", "warning")
+                
+            except Exception as e:
+                error = f"❌ Error: {str(e)}"
+                response_placeholder.error(error)
+                response = error
+                ToastNotification.show(f"Error: {str(e)}", "error")
+            
+            finally:
+                # Always save the message and reset state
                 add_message({
                     "role": "assistant",
                     "content": response if response else "*[No response generated]*",
@@ -171,26 +118,5 @@ def render_chat(api_client, health_data: Dict, model: str):
                     "stopped": stopped
                 })
                 
-                if stopped:
-                    ToastNotification.show("Generation stopped", "warning")
-            
-            except Exception as e:
-                error = f"❌ Error: {str(e)}"
-                response_placeholder.error(error)
-                add_message({
-                    "role": "assistant",
-                    "content": error,
-                    "sources": [],
-                    "timestamp": datetime.now().isoformat()
-                })
-                ToastNotification.show(f"Error: {str(e)}", "error")
-            
-            finally:
-                st.session_state.pending_query = None
-                st.session_state.pending_model = None
                 st.session_state.is_generating = False
                 st.session_state.stop_generation = False
-                # Clear the text area
-                if 'custom_chat_input' in st.session_state:
-                    st.session_state.custom_chat_input = ""
-                st.rerun()
