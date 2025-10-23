@@ -128,15 +128,27 @@ def render_conversation_history():
 
 
 def upload_files(files: List, api_client):
-    """Handle file upload"""
+    """Handle file upload with validation"""
     success_count = 0
     uploaded_names = []
+    skipped_count = 0
     
     progress_bar = st.progress(0)
     status_text = st.empty()
     
     for i, file in enumerate(files):
-        status_text.text(f"Uploading {i + 1}/{len(files)}: {file.name}")
+        status_text.text(f"Processing {i + 1}/{len(files)}: {file.name}")
+        
+        # Check for empty files
+        file.seek(0, 2)  # Seek to end
+        file_size = file.tell()
+        file.seek(0)  # Reset to beginning
+        
+        if file_size == 0:
+            ToastNotification.show(f"✗ {file.name}: File is empty", "error")
+            skipped_count += 1
+            progress_bar.progress((i + 1) / len(files))
+            continue
         
         status_code, response = api_client.upload_file(file)
         
@@ -154,6 +166,9 @@ def upload_files(files: List, api_client):
     
     if success_count > 0:
         st.success(f"✅ Uploaded {success_count}/{len(files)} file(s)")
+    
+    if skipped_count > 0:
+        st.warning(f"⚠️ Skipped {skipped_count} empty file(s)")
     
     if uploaded_names and not st.session_state.selected_document:
         st.session_state.selected_document = uploaded_names[0]
