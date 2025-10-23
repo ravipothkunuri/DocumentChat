@@ -31,8 +31,11 @@ def render_chat(api_client, health_data: Dict, model: str):
         if not ollama.get('available'):
             ToastNotification.show("Ollama unavailable", "warning")
     
-    # Display chat history
-    for msg in get_current_chat():
+    # Display chat history (excluding the message being generated)
+    chat_history = get_current_chat()
+    messages_to_display = chat_history[:-1] if st.session_state.is_generating else chat_history
+    
+    for msg in messages_to_display:
         with st.chat_message(msg["role"]):
             st.markdown(msg["content"])
             if msg.get("stopped"):
@@ -65,7 +68,7 @@ def render_chat(api_client, health_data: Dict, model: str):
         if chat_history and chat_history[-1]["role"] == "user":
             user_prompt = chat_history[-1]["content"]
             
-            # Display user message
+            # Display the current user message (since we excluded it from the loop above)
             with st.chat_message("user"):
                 st.markdown(user_prompt)
             
