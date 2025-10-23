@@ -104,166 +104,20 @@ class RAGAPIClient:
 # ============================================================================
 
 class ToastNotification:
-    """Independent toast notification system with session state persistence"""
-    
-    COLORS = {
-        "success": ("#d4edda", "#155724", "#28a745"),
-        "error": ("#f8d7da", "#721c24", "#dc3545"),
-        "warning": ("#fff3cd", "#856404", "#ffc107"),
-        "info": ("#d1ecf1", "#0c5460", "#17a2b8")
-    }
+    """Independent toast notification system using Streamlit's native toast"""
     
     @staticmethod
     def show(message: str, toast_type: str = "info"):
-        """Queue a toast notification to be displayed"""
-        if 'toast_queue' not in st.session_state:
-            st.session_state.toast_queue = []
+        """Show a toast notification using Streamlit's native toast"""
+        icon_map = {
+            "success": "✅",
+            "error": "❌",
+            "warning": "⚠️",
+            "info": "ℹ️"
+        }
         
-        # Add toast to queue with timestamp to make it unique
-        st.session_state.toast_queue.append({
-            'message': message,
-            'type': toast_type,
-            'id': f"{time.time()}_{id(message)}",
-            'timestamp': time.time()
-        })
-    
-    @staticmethod
-    def render_all():
-        """Render all queued toasts with auto-cleanup"""
-        if 'toast_queue' not in st.session_state:
-            st.session_state.toast_queue = []
-            return
-        
-        # Remove toasts older than 4 seconds (backup cleanup)
-        current_time = time.time()
-        st.session_state.toast_queue = [
-            toast for toast in st.session_state.toast_queue 
-            if current_time - toast['timestamp'] < 4.0
-        ]
-        
-        if not st.session_state.toast_queue:
-            return
-        
-        toasts_html = ""
-        
-        for i, toast in enumerate(st.session_state.toast_queue):
-            bg_color, text_color, border_color = ToastNotification.COLORS.get(
-                toast['type'], ToastNotification.COLORS["info"]
-            )
-            
-            # Stack toasts vertically with offset
-            top_position = 80 + (i * 90)
-            toast_id = f"toast-{toast['id']}"
-            # Use data attributes to store timing info
-            age_ms = int((current_time - toast['timestamp']) * 1000)
-            
-            toasts_html += f"""
-                <div id="{toast_id}" class="custom-toast" data-age="{age_ms}" style="
-                    position: fixed;
-                    top: {top_position}px;
-                    right: 20px;
-                    background: {bg_color};
-                    color: {text_color};
-                    padding: 14px 20px;
-                    border-radius: 12px;
-                    border-left: 4px solid {border_color};
-                    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
-                    z-index: 999999;
-                    min-width: 250px;
-                    max-width: 400px;
-                    font-weight: 500;
-                    overflow: hidden;
-                    animation: slideIn 0.3s ease-out;
-                    cursor: pointer;
-                ">
-                    <div style="margin-bottom: 8px;">{toast['message']}</div>
-                    <div style="
-                        height: 3px;
-                        background: rgba(255, 255, 255, 0.3);
-                        border-radius: 2px;
-                        overflow: hidden;
-                        margin: 0 -20px -14px -20px;
-                    ">
-                        <div class="toast-progress-bar" style="
-                            height: 100%;
-                            background: {border_color};
-                            width: 100%;
-                        "></div>
-                    </div>
-                </div>
-            """
-        
-        st.markdown(f"""
-            {toasts_html}
-            <style>
-                @keyframes slideIn {{
-                    from {{
-                        transform: translateX(400px);
-                        opacity: 0;
-                    }}
-                    to {{
-                        transform: translateX(0);
-                        opacity: 1;
-                    }}
-                }}
-                @keyframes slideOut {{
-                    from {{
-                        transform: translateX(0);
-                        opacity: 1;
-                    }}
-                    to {{
-                        transform: translateX(400px);
-                        opacity: 0;
-                    }}
-                }}
-            </style>
-            <script>
-                (function() {{
-                    // Process all toasts
-                    const toasts = document.querySelectorAll('.custom-toast');
-                    const DURATION = 3000; // 3 seconds
-                    
-                    toasts.forEach(function(toast) {{
-                        const progressBar = toast.querySelector('.toast-progress-bar');
-                        const initialAge = parseInt(toast.getAttribute('data-age')) || 0;
-                        const remainingTime = Math.max(0, DURATION - initialAge);
-                        
-                        if (remainingTime === 0) {{
-                            // Already expired, remove immediately
-                            if (toast.parentNode) toast.remove();
-                            return;
-                        }}
-                        
-                        // Animate progress bar
-                        if (progressBar) {{
-                            const initialProgress = (remainingTime / DURATION) * 100;
-                            progressBar.style.width = initialProgress + '%';
-                            progressBar.style.transition = `width ${{remainingTime}}ms linear`;
-                            
-                            // Force reflow to trigger transition
-                            void progressBar.offsetWidth;
-                            progressBar.style.width = '0%';
-                        }}
-                        
-                        // Auto-dismiss after remaining time
-                        setTimeout(function() {{
-                            toast.style.animation = 'slideOut 0.3s ease-in forwards';
-                            setTimeout(function() {{
-                                if (toast.parentNode) toast.remove();
-                            }}, 300);
-                        }}, remainingTime);
-                        
-                        // Click to dismiss
-                        toast.addEventListener('click', function() {{
-                            toast.style.animation = 'slideOut 0.3s ease-in forwards';
-                            setTimeout(function() {{
-                                if (toast.parentNode) toast.remove();
-                            }}, 300);
-                        }});
-                    }});
-                }})();
-            </script>
-        """, unsafe_allow_html=True)
+        icon = icon_map.get(toast_type, "ℹ️")
+        st.toast(f"{icon} {message}", icon=icon_map.get(toast_type, "ℹ️"))
 
 # ============================================================================
 # UI STYLING
@@ -411,8 +265,7 @@ def init_session_state():
     defaults = {
         'document_chats': {},
         'selected_document': None,
-        'uploader_key': 0,
-        'toast_queue': []
+        'uploader_key': 0
     }
     for key, value in defaults.items():
         if key not in st.session_state:
@@ -655,9 +508,6 @@ def main():
     
     apply_custom_css()
     init_session_state()
-    
-    # Render toasts at the very beginning
-    ToastNotification.render_all()
     
     api_client = RAGAPIClient(API_BASE_URL)
     
