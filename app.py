@@ -123,30 +123,54 @@ class ToastNotification:
         st.session_state.toast_queue.append({
             'message': message,
             'type': toast_type,
-            'id': f"{time.time()}_{id(message)}"
+            'id': f"{time.time()}_{id(message)}",
+            'timestamp': time.time()
         })
     
     @staticmethod
     def render_all():
-        """Render all queued toasts"""
-        if 'toast_queue' not in st.session_state or not st.session_state.toast_queue:
+        """Render all queued toasts and auto-clear old ones"""
+        if 'toast_queue' not in st.session_state:
+            st.session_state.toast_queue = []
+            return
+        
+        # Remove toasts older than 3.5 seconds
+        current_time = time.time()
+        st.session_state.toast_queue = [
+            toast for toast in st.session_state.toast_queue 
+            if current_time - toast['timestamp'] < 3.5
+        ]
+        
+        if not st.session_state.toast_queue:
             return
         
         toasts_html = ""
-        toast_ids = []
         
         for i, toast in enumerate(st.session_state.toast_queue):
             bg_color, text_color, border_color = ToastNotification.COLORS.get(
                 toast['type'], ToastNotification.COLORS["info"]
             )
             
+            # Calculate age and opacity
+            age = current_time - toast['timestamp']
+            
+            # Fade out in the last 0.5 seconds
+            if age > 3.0:
+                opacity = 1 - ((age - 3.0) / 0.5)
+                transform = f"translateX({(age - 3.0) * 800}px)"
+            else:
+                opacity = 1
+                transform = "translateX(0)"
+            
             # Stack toasts vertically with offset
             top_position = 80 + (i * 90)
             toast_id = f"toast-{toast['id']}"
-            toast_ids.append(toast_id)
+            
+            # Progress percentage
+            progress = max(0, 100 - (age / 3.0 * 100))
             
             toasts_html += f"""
-                <div id="{toast_id}" class="toast-notification" style="
+                <div id="{toast_id}" style="
                     position: fixed;
                     top: {top_position}px;
                     right: 20px;
@@ -160,97 +184,36 @@ class ToastNotification:
                     min-width: 250px;
                     max-width: 400px;
                     font-weight: 500;
-                    animation: slideIn 0.3s ease-out;
                     overflow: hidden;
+                    opacity: {opacity};
+                    transform: {transform};
+                    transition: opacity 0.3s ease, transform 0.3s ease;
+                    cursor: pointer;
                 ">
                     <div style="margin-bottom: 8px;">{toast['message']}</div>
-                    <div class="toast-progress" style="
+                    <div style="
                         height: 3px;
                         background: rgba(255, 255, 255, 0.3);
                         border-radius: 2px;
                         overflow: hidden;
                         margin: 0 -20px -14px -20px;
                     ">
-                        <div class="toast-progress-bar" style="
+                        <div style="
                             height: 100%;
                             background: {border_color};
-                            width: 100%;
-                            animation: shrinkWidth 3s linear forwards;
+                            width: {progress}%;
+                            transition: width 0.1s linear;
                         "></div>
                     </div>
                 </div>
             """
         
-        # Join all toast IDs for JavaScript
-        toast_ids_str = ",".join([f"'{tid}'" for tid in toast_ids])
+        st.markdown(toasts_html, unsafe_allow_html=True)
         
-        st.markdown(f"""
-            {toasts_html}
-            <style>
-                @keyframes slideIn {{
-                    from {{
-                        transform: translateX(400px);
-                        opacity: 0;
-                    }}
-                    to {{
-                        transform: translateX(0);
-                        opacity: 1;
-                    }}
-                }}
-                @keyframes slideOut {{
-                    from {{
-                        transform: translateX(0);
-                        opacity: 1;
-                    }}
-                    to {{
-                        transform: translateX(400px);
-                        opacity: 0;
-                    }}
-                }}
-                @keyframes shrinkWidth {{
-                    from {{
-                        width: 100%;
-                    }}
-                    to {{
-                        width: 0%;
-                    }}
-                }}
-            </style>
-            <script>
-                (function() {{
-                    const toastIds = [{toast_ids_str}];
-                    
-                    toastIds.forEach(function(toastId) {{
-                        const toast = document.getElementById(toastId);
-                        if (toast) {{
-                            // Auto-dismiss after 3 seconds
-                            setTimeout(function() {{
-                                toast.style.animation = 'slideOut 0.3s ease-in forwards';
-                                setTimeout(function() {{
-                                    if (toast && toast.parentNode) {{
-                                        toast.parentNode.removeChild(toast);
-                                    }}
-                                }}, 300);
-                            }}, 3000);
-                            
-                            // Click to dismiss
-                            toast.style.cursor = 'pointer';
-                            toast.addEventListener('click', function() {{
-                                toast.style.animation = 'slideOut 0.3s ease-in forwards';
-                                setTimeout(function() {{
-                                    if (toast && toast.parentNode) {{
-                                        toast.parentNode.removeChild(toast);
-                                    }}
-                                }}, 300);
-                            }});
-                        }}
-                    }});
-                }})();
-            </script>
-        """, unsafe_allow_html=True)
-        
-        # Clear the queue after rendering
-        st.session_state.toast_queue = []
+        # Auto-rerun to update toasts if any are visible
+        if st.session_state.toast_queue:
+            time.sleep(0.1)
+            st.rerun()
 
 # ============================================================================
 # UI STYLING
