@@ -30,6 +30,8 @@ class ConfigManager:
         'temperature': 0.7,
         'timeout': 300,
         'cold_start_timeout': 900,
+        'heartbeat_interval': 10,
+        'heartbeat_enabled': True,
         'total_queries': 0
     }
     

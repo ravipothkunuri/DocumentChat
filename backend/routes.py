@@ -1,6 +1,7 @@
 """
 API route handlers
 """
+import asyncio
 import json
 import logging
 import traceback
@@ -193,8 +194,8 @@ Respond naturally as the document. Your response:"""
             async def generate():
                 disconnected = False
                 stream_generator = None
-                last_heartbeat = datetime.now()
-                heartbeat_interval = 10  # Send heartbeat every 10 seconds
+                heartbeat_enabled = config_manager.get('heartbeat_enabled', True)
+                heartbeat_interval = config_manager.get('heartbeat_interval', 10)
                 
                 try:
                     metadata = {
@@ -208,27 +209,74 @@ Respond naturally as the document. Your response:"""
                     yield f"data: {json.dumps(metadata)}\n\n"
 
                     stream_generator = llm.stream(prompt)
-                    content_received = False
                     
-                    for chunk in stream_generator:
-                        if await request.is_disconnected():
-                            disconnected = True
-                            logger.info("Client disconnected during streaming")
-                            break
+                    # Queue for chunks from LLM
+                    chunk_queue = asyncio.Queue()
+                    streaming_complete = asyncio.Event()
+                    streaming_error = None
+                    
+                    # Background task to read from LLM stream
+                    async def read_llm_stream():
+                        nonlocal streaming_error
+                        try:
+                            for chunk in stream_generator:
+                                await chunk_queue.put(chunk)
+                        except Exception as e:
+                            streaming_error = e
+                            logger.error(f"Error in LLM streaming: {e}")
+                        finally:
+                            streaming_complete.set()
+                    
+                    # Start background LLM reading task
+                    read_task = asyncio.create_task(read_llm_stream())
+                    
+                    # Track last heartbeat and content time
+                    last_activity = datetime.now()
+                    
+                    try:
+                        while not streaming_complete.is_set() or not chunk_queue.empty():
+                            # Check for client disconnect
+                            if await request.is_disconnected():
+                                disconnected = True
+                                logger.info("Client disconnected during streaming")
+                                read_task.cancel()
+                                break
+                            
+                            # Check for streaming errors
+                            if streaming_error:
+                                raise streaming_error
+                            
+                            try:
+                                # Try to get a chunk with short timeout
+                                chunk = await asyncio.wait_for(chunk_queue.get(), timeout=0.1)
+                                
+                                if chunk:
+                                    yield f"data: {json.dumps({'type': 'content', 'content': chunk})}\n\n"
+                                    last_activity = datetime.now()
+                                    
+                            except asyncio.TimeoutError:
+                                # No chunk available - check if we need to send heartbeat
+                                current_time = datetime.now()
+                                time_since_activity = (current_time - last_activity).total_seconds()
+                                
+                                if heartbeat_enabled and time_since_activity >= heartbeat_interval:
+                                    heartbeat = {
+                                        "type": "heartbeat",
+                                        "timestamp": current_time.isoformat()
+                                    }
+                                    yield f"data: {json.dumps(heartbeat)}\n\n"
+                                    last_activity = current_time
+                                    logger.debug(f"Sent heartbeat after {time_since_activity:.1f}s of inactivity")
+                                
+                                # Small sleep to prevent busy-waiting
+                                await asyncio.sleep(0.05)
                         
-                        current_time = datetime.now()
+                        # Wait for read task to complete
+                        await read_task
                         
-                        # Send heartbeat if no content for heartbeat_interval seconds
-                        if (current_time - last_heartbeat).total_seconds() > heartbeat_interval:
-                            heartbeat = {"type": "heartbeat", "timestamp": current_time.isoformat()}
-                            yield f"data: {json.dumps(heartbeat)}\n\n"
-                            last_heartbeat = current_time
-                            logger.debug("Sent heartbeat to keep connection alive")
-                        
-                        if chunk:
-                            content_received = True
-                            yield f"data: {json.dumps({'type': 'content', 'content': chunk})}\n\n"
-                            last_heartbeat = current_time  # Reset heartbeat timer on content
+                    except asyncio.CancelledError:
+                        read_task.cancel()
+                        raise
 
                     if not disconnected:
                         processing_time = (datetime.now() - start_time).total_seconds()
