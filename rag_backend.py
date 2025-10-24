@@ -275,7 +275,8 @@ class OllamaLLM:
             raise ValueError(f"Failed to communicate with model: {str(e)}")
     
     def stream(self, prompt: str) -> Iterator[str]:
-        """Stream the model's response"""
+        """Stream the model's response with proper connection cleanup"""
+        response = None
         try:
             if not self.model_loaded:
                 self._verify_endpoint_with_minimal_call()
@@ -286,6 +287,7 @@ class OllamaLLM:
             response = requests.post(url, json=payload, timeout=current_timeout, stream=True)
             
             if response.status_code == 404 and self.endpoint_type == "chat":
+                response.close()
                 self.endpoint_type = "generate"
                 url, payload = self._build_payload(prompt, stream=True)
                 response = requests.post(url, json=payload, timeout=current_timeout, stream=True)
@@ -293,33 +295,42 @@ class OllamaLLM:
             response.raise_for_status()
             first_chunk = True
             
-            for line in response.iter_lines():
-                if line:
-                    try:
-                        data = json.loads(line)
-                        content = self._extract_content(data)
-                        
-                        if first_chunk and content:
-                            self.model_loaded = True
-                            first_chunk = False
+            try:
+                for line in response.iter_lines():
+                    if line:
+                        try:
+                            data = json.loads(line)
+                            content = self._extract_content(data)
+                            
+                            if first_chunk and content:
+                                self.model_loaded = True
+                                first_chunk = False
 
-                        if content:
-                            yield content
-                        
-                        if data.get("done", False):
-                            break
-                    except json.JSONDecodeError:
-                        continue
+                            if content:
+                                yield content
+                            
+                            if data.get("done", False):
+                                break
+                        except json.JSONDecodeError:
+                            continue
+            finally:
+                response.close()
+                
         except requests.exceptions.Timeout:
             error_msg = f"Streaming request timed out after {current_timeout}s. Please try again."
             logger.error(error_msg)
             raise ValueError(error_msg)
         except requests.exceptions.HTTPError as e:
-            if e.response.status_code == 404:
+            if e.response and e.response.status_code == 404:
                 raise ValueError(f"Model '{self.model}' not found. Pull it using: ollama pull {self.model}")
             raise ValueError(f"Streaming error: {str(e)}")
+        except (BrokenPipeError, ConnectionError, requests.exceptions.ChunkedEncodingError) as e:
+            logger.warning(f"Stream interrupted: {str(e)}")
         except Exception as e:
             raise ValueError(f"Failed to stream: {str(e)}")
+        finally:
+            if response is not None:
+                response.close()
 
 # ============================================================================
 # CONFIGURATION MANAGER
