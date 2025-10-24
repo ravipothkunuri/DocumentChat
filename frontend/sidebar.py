@@ -14,60 +14,55 @@ from document_modal import show_document_overview
 
 
 def render_document_card(doc: Dict, api_client):
-    """Render document card with auto-expanding actions when selected"""
+    """Render document card with expander and vertical buttons"""
     doc_name = doc['filename']
     is_selected = st.session_state.selected_document == doc_name
     
-    with st.container():
-        # Main document button
+    # Create expander for document
+    with st.expander(
+        f"{'✅' if is_selected else '📄'} {doc_name}",
+        expanded=is_selected
+    ):
+        # Document info
+        st.caption(f"{doc['chunks']} chunks • {doc['size'] / 1024:.1f} KB")
+        
+        # Select/Open Chat button
         if st.button(
-            f"{'✅' if is_selected else '📄'} {doc_name}",
+            "💬 Open Chat" if not is_selected else "💬 Chat Active",
             key=f"select_{doc_name}",
             use_container_width=True,
             type="primary" if is_selected else "secondary",
-            disabled=st.session_state.is_generating,
-            help=f"{doc['chunks']} chunks • {doc['size'] / 1024:.1f} KB"
+            disabled=st.session_state.is_generating or is_selected
         ):
-            # Toggle selection
-            if st.session_state.selected_document == doc_name:
-                # Deselect if clicking the selected document
-                st.session_state.selected_document = None
-                ToastNotification.show("Document deselected", "info")
-            else:
-                # Select this document
-                st.session_state.selected_document = doc_name
-                ToastNotification.show(f"Selected: {doc_name}", "success")
+            st.session_state.selected_document = doc_name
+            ToastNotification.show(f"Selected: {doc_name}", "success")
             st.rerun()
         
-        # Auto-show actions when selected
-        if is_selected:
-            col1, col2 = st.columns(2)
-            
-            with col1:
-                if st.button("📊 Overview", key=f"overview_{doc_name}", 
-                           use_container_width=True,
-                           disabled=st.session_state.is_generating):
-                    status_code, details = api_client.get_document_details(doc_name)
-                    if status_code == 200:
-                        show_document_overview(details)
-                    else:
-                        ToastNotification.show("Failed to load details", "error")
-            
-            with col2:
-                if st.button("🗑️ Delete", key=f"delete_{doc_name}", 
-                           use_container_width=True,
-                           disabled=st.session_state.is_generating):
-                    status_code, response = api_client.delete_document(doc_name)
-                    if status_code == 200:
-                        if doc_name in st.session_state.document_chats:
-                            del st.session_state.document_chats[doc_name]
-                        if st.session_state.selected_document == doc_name:
-                            st.session_state.selected_document = None
-                        
-                        ToastNotification.show(f"Deleted {doc_name}", "success")
-                        st.rerun()
-                    else:
-                        ToastNotification.show(f"{response.get('message', 'Failed')}", "error")
+        # Overview button (vertical)
+        if st.button("📊 Overview", key=f"overview_{doc_name}", 
+                   use_container_width=True,
+                   disabled=st.session_state.is_generating):
+            status_code, details = api_client.get_document_details(doc_name)
+            if status_code == 200:
+                show_document_overview(details)
+            else:
+                ToastNotification.show("Failed to load details", "error")
+        
+        # Delete button (vertical)
+        if st.button("🗑️ Delete", key=f"delete_{doc_name}", 
+                   use_container_width=True,
+                   disabled=st.session_state.is_generating):
+            status_code, response = api_client.delete_document(doc_name)
+            if status_code == 200:
+                if doc_name in st.session_state.document_chats:
+                    del st.session_state.document_chats[doc_name]
+                if st.session_state.selected_document == doc_name:
+                    st.session_state.selected_document = None
+                
+                ToastNotification.show(f"Deleted {doc_name}", "success")
+                st.rerun()
+            else:
+                ToastNotification.show(f"{response.get('message', 'Failed')}", "error")
 
 
 def render_conversation_history():
