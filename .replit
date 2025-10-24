@@ -31,7 +31,7 @@ outputType = "console"
 
 [[workflows.workflow.tasks]]
 task = "shell.exec"
-args = "uv run python -m uvicorn rag_backend:app --host localhost --port 8000"
+args = "uv run python -m uvicorn rag_backend:app --host 0.0.0.0 --port 8000"
 waitForPort = 8000
 
 [[workflows.workflow]]
@@ -51,12 +51,20 @@ localPort = 5000
 externalPort = 80
 
 [[ports]]
+localPort = 8000
+externalPort = 8000
+
+[[ports]]
 localPort = 36391
 externalPort = 3001
 
 [[ports]]
 localPort = 38377
 externalPort = 3000
+
+[[ports]]
+localPort = 39319
+externalPort = 3002
 
 [deployment]
 deploymentTarget = "vm"
