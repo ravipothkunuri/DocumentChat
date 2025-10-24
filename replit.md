@@ -6,9 +6,17 @@ A production-ready Retrieval-Augmented Generation (RAG) system that enables user
 - Document upload and processing with automatic text chunking
 - Local LLM integration via Ollama (no API keys required)
 - Custom in-memory vector database with JSON persistence
-- Real-time streaming responses
+- Real-time streaming responses with robust disconnect handling
 - Multi-document chat with conversation history
 - Document management and export capabilities
+
+# Recent Changes
+
+**October 24, 2025 - Bug Fixes and UI Improvements:**
+1. **Fixed backend crash when stopping streaming with large models** - Improved cleanup in OllamaLLM.stream() with proper GeneratorExit handling and response closing to prevent lingering connections
+2. **Fixed empty view in onboarding screen** - Removed redundant container wrapper that caused layout issues
+3. **Improved export UI** - Converted from expander to dropdown menu and separated save button in header for better UX
+4. **Fixed text file upload crashes** - Added UTF-8/latin-1 encoding fallback, text validation, and comprehensive error handling for embedding generation
 
 # User Preferences
 
