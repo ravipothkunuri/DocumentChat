@@ -853,6 +853,7 @@ Respond naturally as the document. Your response:"""
         
         if query.stream:
             async def generate():
+                stream_generator = None
                 try:
                     metadata = {
                         "sources": sources,
@@ -864,8 +865,10 @@ Respond naturally as the document. Your response:"""
                     }
                     yield f"data: {json.dumps(metadata)}\n\n"
 
-                    for chunk in llm.stream(prompt):
+                    stream_generator = llm.stream(prompt)
+                    for chunk in stream_generator:
                         if await request.is_disconnected():
+                            logger.info("Client disconnected, stopping stream")
                             break
                         if chunk:
                             yield f"data: {json.dumps({'type': 'content', 'content': chunk})}\n\n"
@@ -876,9 +879,20 @@ Respond naturally as the document. Your response:"""
                     
                     config_manager.increment_queries()
                     logger.info(f"Query completed in {processing_time:.2f}s")
+                except (BrokenPipeError, ConnectionError, ConnectionResetError) as e:
+                    logger.warning(f"Client connection lost during streaming: {e}")
                 except Exception as e:
                     logger.error(f"Streaming error: {e}")
-                    yield f"data: {json.dumps({'type': 'error', 'error': str(e)})}\n\n"
+                    try:
+                        yield f"data: {json.dumps({'type': 'error', 'error': str(e)})}\n\n"
+                    except (BrokenPipeError, ConnectionError, ConnectionResetError):
+                        logger.warning("Cannot send error to client - connection already closed")
+                finally:
+                    if stream_generator is not None:
+                        try:
+                            stream_generator.close()
+                        except Exception:
+                            pass
             
             return StreamingResponse(generate(), media_type="text/event-stream")
         else:
