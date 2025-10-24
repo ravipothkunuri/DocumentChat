@@ -15,9 +15,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field, validator
 
-from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.document_loaders import (
-    PyPDFLoader, TextLoader, UnstructuredWordDocumentLoader
+    PyPDFLoader, TextLoader, Docx2txtLoader
 )
 from langchain_ollama import OllamaEmbeddings
 
@@ -536,7 +536,7 @@ class DocumentProcessor:
     LOADERS = {
         '.pdf': PyPDFLoader,
         '.txt': TextLoader,
-        '.docx': UnstructuredWordDocumentLoader
+        '.docx': Docx2txtLoader
     }
     
     def __init__(self, config: ConfigManager):
