@@ -62,6 +62,10 @@ externalPort = 3001
 localPort = 38377
 externalPort = 3000
 
+[[ports]]
+localPort = 41649
+externalPort = 3002
+
 [deployment]
 deploymentTarget = "vm"
 run = ["bash", "-c", "python -m uvicorn rag_backend:app --host localhost --port 8000 & streamlit run frontend/app.py --server.port 5000 --server.address 0.0.0.0"]

@@ -17,6 +17,7 @@ A production-ready Retrieval-Augmented Generation (RAG) system that enables user
 2. **Fixed empty view in onboarding screen** - Removed redundant container wrapper that caused layout issues
 3. **Improved export UI** - Converted from expander to dropdown menu and separated save button in header for better UX
 4. **Fixed text file upload crashes** - Added UTF-8/latin-1 encoding fallback, text validation, and comprehensive error handling for embedding generation
+5. **Enhanced upload progress display** - Replaced basic progress bar with expandable status widget showing per-file progress, detailed status messages, and auto-collapsing summary
 
 # User Preferences
 

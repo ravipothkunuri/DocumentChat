@@ -105,43 +105,49 @@ def upload_files(files: List, api_client):
     success_count = 0
     uploaded_names = []
     skipped_count = 0
+    total_files = len(files)
     
-    progress_bar = st.progress(0)
-    status_text = st.empty()
-    
-    for i, file in enumerate(files):
-        status_text.text(f"Processing {i + 1}/{len(files)}: {file.name}")
+    with st.status(f"Uploading {total_files} file(s)...", expanded=True) as status:
+        progress_bar = st.progress(0)
         
-        # Check for empty files
-        file.seek(0, 2)  # Seek to end
-        file_size = file.tell()
-        file.seek(0)  # Reset to beginning
+        for i, file in enumerate(files):
+            current_progress = (i / total_files)
+            st.write(f"📤 Processing **{file.name}** ({i + 1}/{total_files})")
+            progress_bar.progress(current_progress)
+            
+            # Check for empty files
+            file.seek(0, 2)  # Seek to end
+            file_size = file.tell()
+            file.seek(0)  # Reset to beginning
+            
+            if file_size == 0:
+                st.write(f"⚠️ Skipped {file.name} (empty file)")
+                ToastNotification.show(f"✗ {file.name}: File is empty", "error")
+                skipped_count += 1
+                continue
+            
+            status_code, response = api_client.upload_file(file)
+            
+            if status_code == 200:
+                st.write(f"✅ {file.name} uploaded successfully")
+                ToastNotification.show(f"✓ {file.name}", "success")
+                success_count += 1
+                uploaded_names.append(file.name)
+            else:
+                error_msg = response.get('message', 'Failed')
+                st.write(f"❌ {file.name}: {error_msg}")
+                ToastNotification.show(f"✗ {file.name}: {error_msg}", "error")
         
-        if file_size == 0:
-            ToastNotification.show(f"✗ {file.name}: File is empty", "error")
-            skipped_count += 1
-            progress_bar.progress((i + 1) / len(files))
-            continue
+        # Complete progress
+        progress_bar.progress(1.0)
         
-        status_code, response = api_client.upload_file(file)
-        
-        if status_code == 200:
-            ToastNotification.show(f"✓ {file.name}", "success")
-            success_count += 1
-            uploaded_names.append(file.name)
+        # Update status
+        if success_count == total_files:
+            status.update(label=f"✅ All {total_files} file(s) uploaded!", state="complete", expanded=False)
+        elif success_count > 0:
+            status.update(label=f"⚠️ Uploaded {success_count}/{total_files} file(s)", state="complete", expanded=False)
         else:
-            ToastNotification.show(f"✗ {file.name}: {response.get('message', 'Failed')}", "error")
-        
-        progress_bar.progress((i + 1) / len(files))
-    
-    status_text.empty()
-    progress_bar.empty()
-    
-    if success_count > 0:
-        st.success(f"✅ Uploaded {success_count}/{len(files)} file(s)")
-    
-    if skipped_count > 0:
-        st.warning(f"⚠️ Skipped {skipped_count} empty file(s)")
+            status.update(label=f"❌ Upload failed", state="error", expanded=True)
     
     if uploaded_names and not st.session_state.selected_document:
         st.session_state.selected_document = uploaded_names[0]
