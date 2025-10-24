@@ -70,7 +70,8 @@ class RAGAPIClient:
         return self._request('GET', f'/documents/{filename}/details', timeout=10)
     
     def query_stream(self, question: str, top_k: int = 4, model: Optional[str] = None):
-        """Stream query response"""
+        """Stream query response with proper connection cleanup"""
+        response = None
         try:
             payload = {"question": question, "stream": True, "top_k": top_k}
             if model:
@@ -86,12 +87,25 @@ class RAGAPIClient:
             )
             
             if response.status_code == 200:
-                for line in response.iter_lines():
-                    if line:
-                        line_text = line.decode('utf-8')
-                        if line_text.startswith('data: '):
-                            yield json.loads(line_text[6:])
+                try:
+                    for line in response.iter_lines():
+                        if line:
+                            line_text = line.decode('utf-8')
+                            if line_text.startswith('data: '):
+                                yield json.loads(line_text[6:])
+                finally:
+                    # Always close the response to free up the connection
+                    response.close()
             else:
                 yield {"type": "error", "message": f"Query failed with status {response.status_code}"}
+                response.close()
+        except requests.exceptions.ChunkedEncodingError:
+            yield {"type": "error", "message": "Connection interrupted"}
+        except requests.exceptions.ConnectionError:
+            yield {"type": "error", "message": "Lost connection to backend"}
         except Exception as e:
             yield {"type": "error", "message": str(e)}
+        finally:
+            # Ensure response is closed even if an exception occurred
+            if response is not None:
+                response.close()
