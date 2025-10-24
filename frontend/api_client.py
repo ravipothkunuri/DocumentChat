@@ -15,13 +15,16 @@ class RAGAPIClient:
     
     def _request(self, method: str, endpoint: str, timeout: int = 10, **kwargs) -> Tuple[int, Dict]:
         """Unified request handler with error handling."""
+        response = None
         try:
             url = f"{self.base_url}{endpoint}"
             response = self.session.request(method, url, timeout=timeout, **kwargs)
             data = response.json() if response.content else {}
             return response.status_code, data
         except json.JSONDecodeError:
-            return response.status_code, {"message": "Invalid response from server"}
+            if response is not None:
+                return response.status_code, {"message": "Invalid response from server"}
+            return 500, {"message": "Invalid response from server"}
         except requests.exceptions.RequestException as e:
             return 500, {"message": f"Connection error: {str(e)}"}
     
@@ -42,7 +45,9 @@ class RAGAPIClient:
     def get_documents(self) -> List[Dict]:
         """Get list of uploaded documents"""
         status_code, data = self._request('GET', '/documents')
-        return data if status_code == 200 else []
+        if status_code == 200 and isinstance(data, list):
+            return data
+        return []
     
     def upload_file(self, file) -> Tuple[int, Dict]:
         """Upload a file to the backend"""
@@ -59,9 +64,11 @@ class RAGAPIClient:
     
     def get_document_details(self, filename: str) -> Tuple[int, Dict]:
         """Get detailed information about a specific document"""
+        if not filename:
+            return 400, {"message": "Filename cannot be empty"}
         return self._request('GET', f'/documents/{filename}/details', timeout=10)
     
-    def query_stream(self, question: str, top_k: int = 4, model: str = None):
+    def query_stream(self, question: str, top_k: int = 4, model: Optional[str] = None):
         """Stream query response"""
         try:
             payload = {"question": question, "stream": True, "top_k": top_k}
@@ -72,7 +79,7 @@ class RAGAPIClient:
                 f"{self.base_url}/query",
                 json=payload,
                 stream=True,
-                timeout=60
+                timeout=300
             )
             
             if response.status_code == 200:

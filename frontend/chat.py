@@ -7,7 +7,7 @@ from datetime import datetime
 from typing import Dict, List, Optional
 from session_state import (
     get_current_chat, add_message, export_chat_json, 
-    export_chat_markdown, get_suggested_questions, save_conversation
+    export_chat_markdown, get_suggested_questions
 )
 from toast import ToastNotification
 
@@ -71,7 +71,7 @@ def render_header_controls():
             all_similarity_scores.extend(msg.get("similarity_scores", []))
     
     if all_sources or chat_history:
-        col1, col2, col3 = st.columns([2, 1, 1])
+        col1, col2 = st.columns([3, 1])
         
         with col1:
             # Sources view
@@ -98,46 +98,31 @@ def render_header_controls():
                             st.markdown(f"📄 **{source}** (Used: {count}x)")
         
         with col2:
-            # Save button
+            # Export dropdown button
             if chat_history:
-                if st.button("💾 Save to History", use_container_width=True, disabled=is_generating):
-                    save_conversation()
-                    ToastNotification.show("Conversation saved to history", "success")
-                    st.rerun()
-        
-        with col3:
-            # Export dropdown
-            if chat_history:
-                export_option = st.selectbox(
-                    "Export",
-                    options=["Select format...", "JSON", "Markdown"],
-                    key="export_format_selector",
-                    disabled=is_generating,
-                    label_visibility="collapsed"
-                )
+                export_cols = st.columns([1, 1])
                 
-                if export_option == "JSON":
+                with export_cols[0]:
                     json_export = export_chat_json(chat_history)
                     st.download_button(
-                        label="📥 Download JSON",
+                        label="📥 JSON",
                         data=json_export,
                         file_name=f"chat_{st.session_state.selected_document}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
                         mime="application/json",
                         use_container_width=True,
                         disabled=is_generating
                     )
-                    st.session_state.export_format_selector = "Select format..."
-                elif export_option == "Markdown":
+                
+                with export_cols[1]:
                     md_export = export_chat_markdown(chat_history)
                     st.download_button(
-                        label="📥 Download MD",
+                        label="📥 MD",
                         data=md_export,
                         file_name=f"chat_{st.session_state.selected_document}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.md",
                         mime="text/markdown",
                         use_container_width=True,
                         disabled=is_generating
                     )
-                    st.session_state.export_format_selector = "Select format..."
 
 
 def render_chat(api_client, health_data: Dict, model: str):
@@ -263,12 +248,15 @@ def render_chat(api_client, health_data: Dict, model: str):
                         if data.get('type') == 'metadata':
                             sources = data.get('sources', [])
                             similarity_scores = data.get('similarity_scores', [])
-                            thinking_placeholder.empty()
+                        elif data.get('type') == 'heartbeat':
+                            # Keep-alive heartbeat - just log and continue
+                            pass
                         elif data.get('type') == 'content':
                             thinking_placeholder.empty()
                             response += data.get('content', '')
                             response_placeholder.markdown(response + "▌")
                         elif data.get('type') == 'done':
+                            thinking_placeholder.empty()
                             response_placeholder.markdown(response)
                         elif data.get('type') == 'error':
                             thinking_placeholder.empty()

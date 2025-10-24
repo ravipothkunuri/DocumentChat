@@ -53,13 +53,7 @@ class DocumentInfo(BaseModel):
 
 
 class OllamaLLM:
-    """Universal Ollama LLM client with automatic endpoint detection"""
-    
-    CHAT_MODEL_PATTERNS = [
-        'llama3', 'llama-3', 'gemma', 'qwen', 'mistral', 'mixtral',
-        'phi3', 'phi-3', 'command', 'deepseek', 'llava', 'openchat',
-        'solar', 'yi', 'nous', 'dolphin', 'orca', 'vicuna', 'wizardlm'
-    ]
+    """Universal Ollama LLM client with dynamic endpoint detection via show API"""
     
     def __init__(
         self, 
@@ -96,51 +90,69 @@ class OllamaLLM:
             return {}
     
     def _detect_endpoint_from_model_info(self) -> Optional[str]:
-        """Detect endpoint type from model information"""
+        """Detect endpoint type dynamically from Ollama's show API"""
         model_info = self._get_model_info()
         
         if not model_info:
+            logger.debug(f"No model info available for {self.model}, will try chat endpoint first")
             return None
         
         template = model_info.get('template', '').lower()
         modelfile = model_info.get('modelfile', '').lower()
+        parameters = model_info.get('parameters', '').lower()
         
+        # Chat API indicators in the model template/configuration
         chat_indicators = [
-            '{{.system}}', '{{.prompt}}', '<|im_start|>', '<|start_header_id|>',
-            '[inst]', '<|user|>', '<|assistant|>', 'chatml', 'chat_template'
+            # Common chat template tokens
+            '{{.system}}', '{{.prompt}}', '{{.messages}}',
+            # Popular chat formats
+            '<|im_start|>', '<|im_end|>',  # ChatML format
+            '<|start_header_id|>', '<|end_header_id|>',  # Llama 3
+            '[inst]', '[/inst]',  # Mistral/Mixtral
+            '<|user|>', '<|assistant|>',  # Generic chat roles
+            # Chat template indicators
+            'chatml', 'chat_template', 'conversation',
+            # Role-based templates
+            '### instruction', '### response',
+            'user:', 'assistant:',
         ]
         
+        # Check template for chat indicators
         if any(indicator in template for indicator in chat_indicators):
+            logger.debug(f"Detected chat endpoint from template for {self.model}")
             return "chat"
         
-        if 'chat' in modelfile or any(indicator in modelfile for indicator in chat_indicators):
+        # Check modelfile for chat configuration
+        if any(indicator in modelfile for indicator in chat_indicators):
+            logger.debug(f"Detected chat endpoint from modelfile for {self.model}")
             return "chat"
         
-        parameters = model_info.get('parameters', '')
-        if 'chat' in parameters.lower():
+        # Check parameters for chat hints
+        if 'chat' in parameters or 'conversation' in parameters:
+            logger.debug(f"Detected chat endpoint from parameters for {self.model}")
             return "chat"
         
+        # If we have detailed model info but no chat indicators, it's likely a generate model
+        if template or modelfile:
+            logger.debug(f"No chat indicators found for {self.model}, using generate endpoint")
+            return "generate"
+        
+        # No conclusive information
         return None
     
-    def _detect_endpoint_from_name(self) -> str:
-        """Fallback: detect endpoint from model name patterns"""
-        model_lower = self.model.lower()
-        
-        for pattern in self.CHAT_MODEL_PATTERNS:
-            if pattern in model_lower:
-                return "chat"
-        
-        return "generate"
-    
     def _detect_endpoint(self) -> None:
-        """Detect which endpoint the model supports"""
+        """Detect which endpoint the model supports using show API"""
         if self.endpoint_type is not None:
             return
         
+        # Try to detect from model info (show API)
         detected_type = self._detect_endpoint_from_model_info()
         
+        # If we couldn't determine from show API, default to chat
+        # Modern models typically support chat, and we'll verify with a test call
         if detected_type is None:
-            detected_type = self._detect_endpoint_from_name()
+            logger.debug(f"Could not determine endpoint from model info, defaulting to chat for {self.model}")
+            detected_type = "chat"
         
         self.endpoint_type = detected_type
     
@@ -236,27 +248,34 @@ class OllamaLLM:
             raise ValueError(f"Failed to communicate with model: {str(e)}")
     
     def stream(self, prompt: str) -> Iterator[str]:
-        """Stream the model's response"""
+        """Stream the model's response with optimized timeout handling"""
         response = None
-        current_timeout = self._get_timeout()
+        
+        # Separate connect timeout (fast fail) from read timeout (patient streaming)
+        # Connect timeout: 30s to establish connection
+        # Read timeout: None to allow slow token generation from large models
+        connect_timeout = 30
+        read_timeout = None  # Infinite read timeout for streaming
+        timeout = (connect_timeout, read_timeout)
+        
         try:
             if not self.model_loaded:
                 self._verify_endpoint_with_minimal_call()
             
             url, payload = self._build_payload(prompt, stream=True)
             
-            response = requests.post(url, json=payload, timeout=current_timeout, stream=True)
+            response = requests.post(url, json=payload, timeout=timeout, stream=True)
             
             if response.status_code == 404 and self.endpoint_type == "chat":
                 self.endpoint_type = "generate"
                 url, payload = self._build_payload(prompt, stream=True)
-                response = requests.post(url, json=payload, timeout=current_timeout, stream=True)
+                response = requests.post(url, json=payload, timeout=timeout, stream=True)
             
             response.raise_for_status()
             first_chunk = True
             
             try:
-                for line in response.iter_lines(decode_unicode=True, chunk_size=1):
+                for line in response.iter_lines(decode_unicode=True, chunk_size=1, delimiter=b'\n'):
                     if line:
                         try:
                             data = json.loads(line)
@@ -290,9 +309,10 @@ class OllamaLLM:
                 except:
                     pass
             raise
-        except requests.exceptions.Timeout:
-            error_msg = f"Streaming request timed out after {current_timeout}s. Please try again."
-            logger.error(error_msg)
+        except requests.exceptions.Timeout as e:
+            # Connection timeout (not read timeout since read_timeout=None)
+            error_msg = f"Failed to connect to Ollama within {connect_timeout}s. Please check if Ollama is running."
+            logger.error(f"{error_msg} Error: {e}")
             raise ValueError(error_msg)
         except requests.exceptions.HTTPError as e:
             if e.response.status_code == 404:

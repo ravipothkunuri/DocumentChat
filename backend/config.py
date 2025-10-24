@@ -28,8 +28,8 @@ class ConfigManager:
         'chunk_size': 1000,
         'chunk_overlap': 200,
         'temperature': 0.7,
-        'timeout': 120,
-        'cold_start_timeout': 600,
+        'timeout': 300,
+        'cold_start_timeout': 900,
         'total_queries': 0
     }
     
@@ -39,11 +39,26 @@ class ConfigManager:
         self.load()
     
     def load(self) -> None:
-        """Load configuration from file"""
+        """Load configuration from file with automatic upgrades"""
         try:
             if self.config_file.exists():
                 with open(self.config_file, 'r') as f:
-                    self.config.update(json.load(f))
+                    loaded_config = json.load(f)
+                
+                # Migrate old timeout values to new minimum thresholds
+                if 'timeout' in loaded_config and loaded_config['timeout'] < 300:
+                    logger.info(f"Upgrading timeout from {loaded_config['timeout']}s to 300s")
+                    loaded_config['timeout'] = 300
+                
+                if 'cold_start_timeout' in loaded_config and loaded_config['cold_start_timeout'] < 900:
+                    logger.info(f"Upgrading cold_start_timeout from {loaded_config['cold_start_timeout']}s to 900s")
+                    loaded_config['cold_start_timeout'] = 900
+                
+                self.config.update(loaded_config)
+                
+                # Save upgraded config
+                if any(key in loaded_config for key in ['timeout', 'cold_start_timeout']):
+                    self.save()
             else:
                 self.save()
         except Exception as e:

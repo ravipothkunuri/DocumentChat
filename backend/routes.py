@@ -69,6 +69,9 @@ async def health_check():
 @router.post("/upload", response_model=DocumentUploadResponse, tags=["Documents"])
 async def upload_document(file: UploadFile = File(...)):
     """Upload and process a document"""
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="Filename is required")
+    
     logger.info(f"Upload request: {file.filename}")
     
     content = await file.read()
@@ -190,6 +193,9 @@ Respond naturally as the document. Your response:"""
             async def generate():
                 disconnected = False
                 stream_generator = None
+                last_heartbeat = datetime.now()
+                heartbeat_interval = 10  # Send heartbeat every 10 seconds
+                
                 try:
                     metadata = {
                         "sources": sources,
@@ -202,13 +208,27 @@ Respond naturally as the document. Your response:"""
                     yield f"data: {json.dumps(metadata)}\n\n"
 
                     stream_generator = llm.stream(prompt)
+                    content_received = False
+                    
                     for chunk in stream_generator:
                         if await request.is_disconnected():
                             disconnected = True
                             logger.info("Client disconnected during streaming")
                             break
+                        
+                        current_time = datetime.now()
+                        
+                        # Send heartbeat if no content for heartbeat_interval seconds
+                        if (current_time - last_heartbeat).total_seconds() > heartbeat_interval:
+                            heartbeat = {"type": "heartbeat", "timestamp": current_time.isoformat()}
+                            yield f"data: {json.dumps(heartbeat)}\n\n"
+                            last_heartbeat = current_time
+                            logger.debug("Sent heartbeat to keep connection alive")
+                        
                         if chunk:
+                            content_received = True
                             yield f"data: {json.dumps({'type': 'content', 'content': chunk})}\n\n"
+                            last_heartbeat = current_time  # Reset heartbeat timer on content
 
                     if not disconnected:
                         processing_time = (datetime.now() - start_time).total_seconds()

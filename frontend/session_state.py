@@ -1,10 +1,11 @@
 """
-Enhanced session state management with conversation history support
+Enhanced session state management with automatic conversation persistence
 """
 import streamlit as st
 from typing import List, Dict
 from datetime import datetime
 import json
+from conversation_service import ConversationService
 
 
 def init_session_state():
@@ -18,9 +19,7 @@ def init_session_state():
         'is_generating': False,
         'stop_generation': False,
         'show_onboarding': True,
-        'conversation_history': [],
-        'selected_conversation': None,
-        'show_doc_info': None,  # Changed from show_document_preview
+        'show_doc_info': None,
         'suggested_questions': {},
     }
     for key, value in defaults.items():
@@ -29,66 +28,34 @@ def init_session_state():
 
 
 def get_current_chat() -> List[Dict]:
-    """Get chat history for selected document"""
+    """Get chat history for selected document with auto-load from file"""
     doc = st.session_state.selected_document
     if doc:
         if doc not in st.session_state.document_chats:
-            st.session_state.document_chats[doc] = []
+            loaded_messages = ConversationService.load_conversation(doc)
+            st.session_state.document_chats[doc] = loaded_messages
         return st.session_state.document_chats[doc]
     return []
 
 
 def add_message(message: Dict):
-    """Add message to current chat"""
+    """Add message to current chat with auto-save to file"""
     doc = st.session_state.selected_document
     if doc:
         if doc not in st.session_state.document_chats:
             st.session_state.document_chats[doc] = []
         st.session_state.document_chats[doc].append(message)
+        
+        if message.get('role') == 'assistant':
+            ConversationService.save_conversation(doc, st.session_state.document_chats[doc])
 
 
 def clear_chat():
-    """Clear current chat history"""
+    """Clear current chat history and delete from file"""
     doc = st.session_state.selected_document
     if doc:
         st.session_state.document_chats[doc] = []
-
-
-def save_conversation():
-    """Save current conversation to history"""
-    doc = st.session_state.selected_document
-    if doc and doc in st.session_state.document_chats:
-        chat = st.session_state.document_chats[doc]
-        if len(chat) > 0:
-            conversation = {
-                'id': f"conv_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
-                'document': doc,
-                'timestamp': datetime.now().isoformat(),
-                'messages': chat.copy(),
-                'title': chat[0]['content'][:50] + "..." if chat else "Untitled"
-            }
-            st.session_state.conversation_history.insert(0, conversation)
-            # Keep only last 50 conversations
-            st.session_state.conversation_history = st.session_state.conversation_history[:50]
-
-
-def load_conversation(conversation_id: str):
-    """Load a saved conversation"""
-    for conv in st.session_state.conversation_history:
-        if conv['id'] == conversation_id:
-            st.session_state.selected_document = conv['document']
-            st.session_state.document_chats[conv['document']] = conv['messages'].copy()
-            st.session_state.selected_conversation = conversation_id
-            return True
-    return False
-
-
-def delete_conversation(conversation_id: str):
-    """Delete a saved conversation"""
-    st.session_state.conversation_history = [
-        conv for conv in st.session_state.conversation_history 
-        if conv['id'] != conversation_id
-    ]
+        ConversationService.save_conversation(doc, [])
 
 
 def export_chat_json(chat_history: List[Dict]) -> str:
