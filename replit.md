@@ -12,7 +12,15 @@ A production-ready Retrieval-Augmented Generation (RAG) system that enables user
 
 # Recent Changes
 
-**October 24, 2025 - Bug Fixes and UI Improvements:**
+**October 24, 2025 - Heartbeat Mechanism Refactoring:**
+1. **Fixed critical heartbeat bug** - Refactored streaming to use async queue-based approach that sends heartbeats independently of LLM chunk generation, fixing timeout issues with slow models
+2. **Made heartbeat configurable** - Added `heartbeat_interval` (10s default) and `heartbeat_enabled` settings to ConfigManager for flexible deployment tuning
+3. **Improved logging** - Enhanced heartbeat debug logging to show time since last activity, making it easier to monitor connection health
+4. **Coordinated timeouts** - Documented and aligned frontend timeout (300s) with backend heartbeat interval to prevent premature disconnections
+5. **Better error handling** - Async background task properly propagates streaming errors to clients while maintaining heartbeat functionality
+6. **Removed unused code** - Cleaned up unused `content_received` variable and other dead code from previous implementation
+
+**Previous Updates - October 24, 2025:**
 1. **Fixed backend crash when stopping streaming with large models** - Improved cleanup in OllamaLLM.stream() with proper GeneratorExit handling and response closing to prevent lingering connections
 2. **Fixed empty view in onboarding screen** - Removed redundant container wrapper that caused layout issues
 3. **Improved export UI** - Converted from expander to dropdown menu and separated save button in header for better UX
@@ -59,6 +67,14 @@ Preferred communication style: Simple, everyday language.
 - JSON-based persistence (documents + embeddings)
 - Validates embedding dimensions on insertion
 - Tracks last update timestamp
+
+**Streaming & Heartbeat Architecture:**
+- **Async Queue-Based Design**: Uses `asyncio.Queue` to decouple LLM chunk generation from client streaming
+- **Independent Heartbeat**: Background task reads LLM stream while main loop sends heartbeats every 10s (configurable)
+- **Timeout Prevention**: Heartbeats keep connection alive during slow model responses (e.g., reasoning models)
+- **Configuration**: `heartbeat_interval` (default: 10s), `heartbeat_enabled` (default: true) in ConfigManager
+- **Error Propagation**: Exceptions in background LLM reader task propagate to client through shared state
+- **Resource Cleanup**: Proper cleanup of async tasks, queues, and stream generators on disconnect or completion
 
 **API Endpoints:**
 - `GET /health` - System health and configuration status
