@@ -31,43 +31,6 @@ THINKING_MESSAGES = [
 ]
 
 
-def render_export_options():
-    """Render chat export options"""
-    chat_history = get_current_chat()
-    
-    if not chat_history:
-        return
-    
-    with st.expander("📥 Export Chat", expanded=False):
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            json_export = export_chat_json(chat_history)
-            st.download_button(
-                label="📄 Export as JSON",
-                data=json_export,
-                file_name=f"chat_{st.session_state.selected_document}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
-                mime="application/json",
-                use_container_width=True
-            )
-        
-        with col2:
-            md_export = export_chat_markdown(chat_history)
-            st.download_button(
-                label="📝 Export as Markdown",
-                data=md_export,
-                file_name=f"chat_{st.session_state.selected_document}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.md",
-                mime="text/markdown",
-                use_container_width=True
-            )
-        
-        # Save to conversation history
-        if st.button("💾 Save to History", use_container_width=True):
-            save_conversation()
-            ToastNotification.show("Conversation saved to history", "success")
-            st.rerun()
-
-
 def render_suggested_questions(api_client, model: str):
     """Render suggested question buttons"""
     chat_history = get_current_chat()
@@ -94,38 +57,83 @@ def render_suggested_questions(api_client, model: str):
                         st.rerun()
 
 
-def render_source_citations(sources: List, similarity_scores: Optional[List] = None):
-    """Render enhanced source citations with scores"""
-    if not sources:
-        return
+def render_header_controls():
+    """Render header with sources and export controls"""
+    chat_history = get_current_chat()
+    is_generating = st.session_state.get('is_generating', False)
     
-    if similarity_scores is None:
-        similarity_scores = []
+    # Collect all sources from chat history
+    all_sources = []
+    all_similarity_scores = []
+    for msg in chat_history:
+        if msg["role"] == "assistant" and msg.get("sources"):
+            all_sources.extend(msg.get("sources", []))
+            all_similarity_scores.extend(msg.get("similarity_scores", []))
     
-    unique_sources = list(dict.fromkeys(sources))  # Preserve order, remove duplicates
-    
-    with st.expander(f"📚 Sources ({len(unique_sources)})", expanded=False):
-        for idx, source in enumerate(unique_sources):
-            # Count how many times this source appears
-            count = sources.count(source)
-            
-            # Get average similarity score for this source
-            if similarity_scores:
-                source_indices = [i for i, s in enumerate(sources) if s == source]
-                avg_score = sum(similarity_scores[i] for i in source_indices) / len(source_indices)
-                score_display = f"{avg_score:.2%}"
-                
-                # Color based on score
-                if avg_score >= 0.7:
-                    color = "🟢"
-                elif avg_score >= 0.5:
-                    color = "🟡"
-                else:
-                    color = "🔴"
-                
-                st.markdown(f"{color} **{source}** (Relevance: {score_display}, Used: {count}x)")
-            else:
-                st.markdown(f"📄 **{source}** (Used: {count}x)")
+    if all_sources or chat_history:
+        col1, col2 = st.columns([1, 1])
+        
+        with col1:
+            # Sources view
+            if all_sources:
+                unique_sources = list(dict.fromkeys(all_sources))
+                with st.expander(f"📚 Sources ({len(unique_sources)})", expanded=False):
+                    for idx, source in enumerate(unique_sources):
+                        count = all_sources.count(source)
+                        
+                        if all_similarity_scores:
+                            source_indices = [i for i, s in enumerate(all_sources) if s == source]
+                            avg_score = sum(all_similarity_scores[i] for i in source_indices) / len(source_indices)
+                            score_display = f"{avg_score:.2%}"
+                            
+                            if avg_score >= 0.7:
+                                color = "🟢"
+                            elif avg_score >= 0.5:
+                                color = "🟡"
+                            else:
+                                color = "🔴"
+                            
+                            st.markdown(f"{color} **{source}** (Relevance: {score_display}, Used: {count}x)")
+                        else:
+                            st.markdown(f"📄 **{source}** (Used: {count}x)")
+        
+        with col2:
+            # Export dropdown
+            if chat_history:
+                with st.expander("💾 Save & Export", expanded=False):
+                    if is_generating:
+                        st.info("⏳ Available after response completes")
+                    else:
+                        # Save to history button
+                        if st.button("💾 Save to History", use_container_width=True, disabled=is_generating):
+                            save_conversation()
+                            ToastNotification.show("Conversation saved to history", "success")
+                            st.rerun()
+                        
+                        st.markdown("**Export:**")
+                        col_json, col_md = st.columns(2)
+                        
+                        with col_json:
+                            json_export = export_chat_json(chat_history)
+                            st.download_button(
+                                label="JSON",
+                                data=json_export,
+                                file_name=f"chat_{st.session_state.selected_document}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
+                                mime="application/json",
+                                use_container_width=True,
+                                disabled=is_generating
+                            )
+                        
+                        with col_md:
+                            md_export = export_chat_markdown(chat_history)
+                            st.download_button(
+                                label="MD",
+                                data=md_export,
+                                file_name=f"chat_{st.session_state.selected_document}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.md",
+                                mime="text/markdown",
+                                use_container_width=True,
+                                disabled=is_generating
+                            )
 
 
 def render_chat(api_client, health_data: Dict, model: str):
@@ -169,23 +177,16 @@ def render_chat(api_client, health_data: Dict, model: str):
         if not ollama.get('available'):
             ToastNotification.show("Ollama unavailable", "warning")
     
-    # Export options at the top
-    render_export_options()
+    # Header controls (sources and export)
+    render_header_controls()
     
-    # Display chat history
+    # Display chat history (without sources in individual messages)
     chat_history = get_current_chat()
     messages_to_display = chat_history[:-1] if st.session_state.is_generating else chat_history
     
     for msg in messages_to_display:
         with st.chat_message(msg["role"]):
             st.markdown(msg["content"])
-            
-            # Show sources for assistant messages
-            if msg["role"] == "assistant" and msg.get("sources"):
-                render_source_citations(
-                    msg.get("sources", []),
-                    msg.get("similarity_scores", [])
-                )
             
             if msg.get("stopped"):
                 st.caption("⚠️ Generation was stopped")
@@ -279,10 +280,6 @@ def render_chat(api_client, health_data: Dict, model: str):
                         response_placeholder.markdown(response)
                     
                     stop_button_placeholder.empty()
-                    
-                    # Show sources immediately after response
-                    if sources and not error_occurred:
-                        render_source_citations(sources, similarity_scores)
                     
                     # Save message
                     add_message({

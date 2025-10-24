@@ -177,6 +177,7 @@ Respond naturally as the document. Your response:"""
         
         if query.stream:
             async def generate():
+                disconnected = False
                 try:
                     metadata = {
                         "sources": sources,
@@ -190,19 +191,31 @@ Respond naturally as the document. Your response:"""
 
                     for chunk in llm.stream(prompt):
                         if await request.is_disconnected():
+                            disconnected = True
+                            logger.info("Client disconnected during streaming")
                             break
                         if chunk:
                             yield f"data: {json.dumps({'type': 'content', 'content': chunk})}\n\n"
 
-                    processing_time = (datetime.now() - start_time).total_seconds()
-                    completion = {"type": "done", "processing_time": processing_time}
-                    yield f"data: {json.dumps(completion)}\n\n"
-                    
-                    config_manager.increment_queries()
-                    logger.info(f"Query completed in {processing_time:.2f}s")
+                    if not disconnected:
+                        processing_time = (datetime.now() - start_time).total_seconds()
+                        completion = {"type": "done", "processing_time": processing_time}
+                        yield f"data: {json.dumps(completion)}\n\n"
+                        
+                        config_manager.increment_queries()
+                        logger.info(f"Query completed in {processing_time:.2f}s")
+                    else:
+                        processing_time = (datetime.now() - start_time).total_seconds()
+                        logger.info(f"Query interrupted after {processing_time:.2f}s")
+                except GeneratorExit:
+                    logger.info("Generator closed by client disconnect")
+                    raise
                 except Exception as e:
                     logger.error(f"Streaming error: {e}")
-                    yield f"data: {json.dumps({'type': 'error', 'error': str(e)})}\n\n"
+                    try:
+                        yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
+                    except:
+                        pass
             
             return StreamingResponse(generate(), media_type="text/event-stream")
         else:
