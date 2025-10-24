@@ -14,58 +14,36 @@ from document_modal import show_document_overview
 
 
 def render_document_card(doc: Dict, api_client):
-    """Render improved document card with better selection UI"""
+    """Render document card with auto-expanding actions when selected"""
     doc_name = doc['filename']
     is_selected = st.session_state.selected_document == doc_name
     
-    if f'expanded_{doc_name}' not in st.session_state:
-        st.session_state[f'expanded_{doc_name}'] = False
-    
     with st.container():
         # Main document button
-        col_doc, col_expand = st.columns([5, 1])
+        if st.button(
+            f"{'✅' if is_selected else '📄'} {doc_name}",
+            key=f"select_{doc_name}",
+            use_container_width=True,
+            type="primary" if is_selected else "secondary",
+            disabled=st.session_state.is_generating,
+            help=f"{doc['chunks']} chunks • {doc['size'] / 1024:.1f} KB"
+        ):
+            # Toggle selection
+            if st.session_state.selected_document == doc_name:
+                # Deselect if clicking the selected document
+                st.session_state.selected_document = None
+                ToastNotification.show("Document deselected", "info")
+            else:
+                # Select this document
+                st.session_state.selected_document = doc_name
+                ToastNotification.show(f"Selected: {doc_name}", "success")
+            st.rerun()
         
-        with col_doc:
-            if st.button(
-                f"{'✅' if is_selected else '📄'} {doc_name}",
-                key=f"select_{doc_name}",
-                use_container_width=True,
-                type="primary" if is_selected else "secondary",
-                disabled=st.session_state.is_generating,
-                help=f"{doc['chunks']} chunks • {doc['size'] / 1024:.1f} KB"
-            ):
-                # Toggle selection
-                if st.session_state.selected_document == doc_name:
-                    # Deselect if clicking the selected document
-                    st.session_state.selected_document = None
-                    st.session_state[f'expanded_{doc_name}'] = False
-                    ToastNotification.show("Document deselected", "info")
-                else:
-                    # Select this document
-                    st.session_state.selected_document = doc_name
-                    for key in list(st.session_state.keys()):
-                        if isinstance(key, str) and key.startswith('expanded_') and key != f'expanded_{doc_name}':
-                            st.session_state[key] = False
-                    ToastNotification.show(f"Selected: {doc_name}", "success")
-                st.rerun()
-        
-        with col_expand:
-            expand_icon = "▼" if st.session_state[f'expanded_{doc_name}'] else "▶"
-            if st.button(
-                expand_icon,
-                key=f"expand_{doc_name}",
-                use_container_width=True,
-                help="Show actions",
-                disabled=st.session_state.is_generating
-            ):
-                st.session_state[f'expanded_{doc_name}'] = not st.session_state[f'expanded_{doc_name}']
-                st.rerun()
-        
-        # Expandable actions
-        if st.session_state[f'expanded_{doc_name}']:
-            action_col1, action_col2 = st.columns(2)
+        # Auto-show actions when selected
+        if is_selected:
+            col1, col2 = st.columns(2)
             
-            with action_col1:
+            with col1:
                 if st.button("📊 Overview", key=f"overview_{doc_name}", 
                            use_container_width=True,
                            disabled=st.session_state.is_generating):
@@ -75,7 +53,7 @@ def render_document_card(doc: Dict, api_client):
                     else:
                         ToastNotification.show("Failed to load details", "error")
             
-            with action_col2:
+            with col2:
                 if st.button("🗑️ Delete", key=f"delete_{doc_name}", 
                            use_container_width=True,
                            disabled=st.session_state.is_generating):
@@ -103,7 +81,7 @@ def render_conversation_history():
     for conv in st.session_state.conversation_history:
         is_current = st.session_state.selected_conversation == conv['id']
         
-        col1, col2 = st.columns([4, 1])
+        col1, col2 = st.columns([5, 1])
         
         with col1:
             dt = datetime.fromisoformat(conv['timestamp'])
@@ -119,7 +97,7 @@ def render_conversation_history():
                 st.rerun()
         
         with col2:
-            if st.button("🗑️", key=f"del_conv_{conv['id']}", help="Delete"):
+            if st.button("🗑️", key=f"del_conv_{conv['id']}", help="Delete", use_container_width=True):
                 delete_conversation(conv['id'])
                 if st.session_state.selected_conversation == conv['id']:
                     st.session_state.selected_conversation = None

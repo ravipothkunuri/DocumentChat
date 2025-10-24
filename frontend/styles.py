@@ -80,8 +80,8 @@ def apply_custom_css():
         border-color: #3b82f6 !important;
     }
     
-    /* Delete button - Compact */
-    button[key*="delete_"], button[key*="del_conv_"] {
+    /* Delete button in conversation history - Compact */
+    button[key*="del_conv_"] {
         background: rgba(239, 68, 68, 0.1) !important;
         border: 2px solid rgba(239, 68, 68, 0.5) !important;
         color: #ef4444 !important;
@@ -90,10 +90,10 @@ def apply_custom_css():
         padding: 0 !important;
         min-height: 40px !important;
         max-height: 40px !important;
-        width: 45px !important;
+        width: 100% !important;
     }
     
-    button[key*="delete_"]:hover, button[key*="del_conv_"]:hover {
+    button[key*="del_conv_"]:hover {
         background: rgba(239, 68, 68, 0.2) !important;
         border-color: #ef4444 !important;
         color: #dc2626 !important;
@@ -249,18 +249,36 @@ def apply_custom_css():
     }
     
     /* Action buttons (Overview, Delete) */
-    button[key*="overview_"] {
-        background: rgba(59, 130, 246, 0.1) !important;
-        border: 2px solid rgba(59, 130, 246, 0.3) !important;
-        color: #3b82f6 !important;
+    button[key*="overview_"], button[key*="delete_"] {
         font-size: 0.85rem !important;
-        padding: 0.5rem !important;
+        padding: 0.4rem 0.6rem !important;
         min-height: 36px !important;
+        margin-top: 0.25rem !important;
+        border-radius: 6px !important;
+    }
+    
+    button[key*="overview_"] {
+        background: rgba(59, 130, 246, 0.08) !important;
+        border: 1.5px solid rgba(59, 130, 246, 0.25) !important;
+        color: #3b82f6 !important;
     }
     
     button[key*="overview_"]:hover {
-        background: rgba(59, 130, 246, 0.2) !important;
+        background: rgba(59, 130, 246, 0.15) !important;
         border-color: #3b82f6 !important;
+    }
+    
+    button[key*="delete_"] {
+        background: rgba(239, 68, 68, 0.08) !important;
+        border: 1.5px solid rgba(239, 68, 68, 0.25) !important;
+        color: #ef4444 !important;
+        font-weight: 600 !important;
+    }
+    
+    button[key*="delete_"]:hover {
+        background: rgba(239, 68, 68, 0.15) !important;
+        border-color: #ef4444 !important;
+        color: #dc2626 !important;
     }
     
     /* Chat message styling */

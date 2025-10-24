@@ -43,21 +43,27 @@ st.markdown('<div class="main-header">📚 RAG Chat Assistant</div>', unsafe_all
 # Sidebar
 render_sidebar(api_client)
 
-# Show onboarding for first-time users or when no document is selected
+# Check document state
 document_count = health_data.get('document_count', 0) if health_data else 0
 has_selected_document = st.session_state.selected_document is not None
 
-# Show onboarding if: first time OR (has documents but none selected)
-show_onboarding_now = st.session_state.get('show_onboarding', True)
-if show_onboarding_now or (document_count > 0 and not has_selected_document):
-    render_onboarding()
-elif document_count == 0:
-    # Show quick start if no documents uploaded yet
-    render_quick_start_card()
+# Dismiss onboarding when a document is selected
+if has_selected_document:
+    st.session_state.show_onboarding = False
 
-# Main chat interface
-model = st.session_state.get('current_model', DEFAULT_LLM_MODEL)
-if health_data:
-    render_chat(api_client, health_data, model)
+# Determine what to show
+show_onboarding_now = st.session_state.get('show_onboarding', True)
+
+if not has_selected_document and show_onboarding_now:
+    # First time user, no document selected
+    render_onboarding()
+elif not has_selected_document and document_count == 0:
+    # No documents uploaded yet
+    render_quick_start_card()
 else:
-    st.warning("⚠️ Unable to connect to backend")
+    # Document is selected or user dismissed onboarding - show chat
+    model = st.session_state.get('current_model', DEFAULT_LLM_MODEL)
+    if health_data:
+        render_chat(api_client, health_data, model)
+    else:
+        st.warning("⚠️ Unable to connect to backend")
