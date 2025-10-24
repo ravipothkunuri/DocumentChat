@@ -4,6 +4,7 @@ API client for backend interactions
 import requests
 import json
 from typing import List, Dict, Tuple, Optional
+from config import STREAM_TIMEOUT
 
 
 class RAGAPIClient:
@@ -75,11 +76,13 @@ class RAGAPIClient:
             if model:
                 payload["model"] = model
             
+            # Use configured timeout to accommodate heartbeat mechanism
+            # Backend sends heartbeat every 10s by default, so timeout won't be triggered
             response = self.session.post(
                 f"{self.base_url}/query",
                 json=payload,
                 stream=True,
-                timeout=300
+                timeout=STREAM_TIMEOUT
             )
             
             if response.status_code == 200:

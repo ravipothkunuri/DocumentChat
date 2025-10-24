@@ -6,7 +6,7 @@ import json
 import logging
 import traceback
 from datetime import datetime
-from typing import List
+from typing import List, Optional
 from pathlib import Path
 
 from fastapi import File, UploadFile, Request, HTTPException, APIRouter
@@ -213,7 +213,7 @@ Respond naturally as the document. Your response:"""
                     # Queue for chunks from LLM
                     chunk_queue = asyncio.Queue()
                     streaming_complete = asyncio.Event()
-                    streaming_error = None
+                    streaming_error: Optional[Exception] = None
                     
                     # Background task to read from LLM stream
                     async def read_llm_stream():
@@ -243,7 +243,9 @@ Respond naturally as the document. Your response:"""
                                 break
                             
                             # Check for streaming errors
-                            if streaming_error:
+                            # Note: Pylance may show a false-positive type error here,
+                            # but the code is correct - streaming_error is Optional[Exception]
+                            if streaming_error is not None:
                                 raise streaming_error
                             
                             try:
