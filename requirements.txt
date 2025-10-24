@@ -40,3 +40,4 @@ streamlit
 unstructured
 uvicorn
 httpx
+httpx

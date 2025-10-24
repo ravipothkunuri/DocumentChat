@@ -219,7 +219,7 @@ Respond naturally as the document. Your response:"""
                     async def read_llm_stream():
                         nonlocal streaming_error
                         try:
-                            for chunk in stream_generator:
+                            async for chunk in stream_generator:
                                 await chunk_queue.put(chunk)
                         except Exception as e:
                             streaming_error = e
@@ -292,11 +292,8 @@ Respond naturally as the document. Your response:"""
                         logger.info(f"Query interrupted after {processing_time:.2f}s")
                 except GeneratorExit:
                     logger.info("Generator closed by client disconnect")
-                    if stream_generator is not None:
-                        try:
-                            stream_generator.close()
-                        except:
-                            pass
+                    # Async generator cleanup is handled automatically by httpx context managers
+                    # and task cancellation - no manual cleanup needed
                     raise
                 except Exception as e:
                     logger.error(f"Streaming error: {e}")
@@ -306,16 +303,10 @@ Respond naturally as the document. Your response:"""
                             yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
                         except:
                             pass
-                finally:
-                    if stream_generator is not None:
-                        try:
-                            stream_generator.close()
-                        except:
-                            pass
             
             return StreamingResponse(generate(), media_type="text/event-stream")
         else:
-            answer = llm.invoke(prompt)
+            answer = await llm.invoke(prompt)
             answer = clean_llm_response(answer)
             
             processing_time = (datetime.now() - start_time).total_seconds()

@@ -72,7 +72,7 @@ class OllamaLLM:
         self.model_loaded = False
         self.model_info = None
     
-    def _get_model_info(self) -> Dict[str, Any]:
+    async def _get_model_info(self) -> Dict[str, Any]:
         """Fetch model information from Ollama's show API"""
         if self.model_info is not None:
             return self.model_info
@@ -80,18 +80,19 @@ class OllamaLLM:
         try:
             show_url = f"{self.base_url}/api/show"
             payload = {"name": self.model}
-            response = requests.post(show_url, json=payload, timeout=10)
+            async with httpx.AsyncClient() as client:
+                response = await client.post(show_url, json=payload, timeout=10)
             
-            if response.status_code == 200:
-                self.model_info = response.json()
-                return self.model_info
+                if response.status_code == 200:
+                    self.model_info = response.json()
+                    return self.model_info
             return {}
         except Exception:
             return {}
     
-    def _detect_endpoint_from_model_info(self) -> Optional[str]:
+    async def _detect_endpoint_from_model_info(self) -> Optional[str]:
         """Detect endpoint type dynamically from Ollama's show API"""
-        model_info = self._get_model_info()
+        model_info = await self._get_model_info()
         
         if not model_info:
             logger.debug(f"No model info available for {self.model}, will try chat endpoint first")
@@ -140,13 +141,13 @@ class OllamaLLM:
         # No conclusive information
         return None
     
-    def _detect_endpoint(self) -> None:
+    async def _detect_endpoint(self) -> None:
         """Detect which endpoint the model supports using show API"""
         if self.endpoint_type is not None:
             return
         
         # Try to detect from model info (show API)
-        detected_type = self._detect_endpoint_from_model_info()
+        detected_type = await self._detect_endpoint_from_model_info()
         
         # If we couldn't determine from show API, default to chat
         # Modern models typically support chat, and we'll verify with a test call
@@ -156,13 +157,13 @@ class OllamaLLM:
         
         self.endpoint_type = detected_type
     
-    def _verify_endpoint_with_minimal_call(self) -> None:
+    async def _verify_endpoint_with_minimal_call(self) -> None:
         """Verify endpoint works with a minimal test call"""
         if self.model_loaded:
             return
         
         try:
-            url, payload = self._build_payload("test", stream=False)
+            url, payload = await self._build_payload("test", stream=False)
             
             if self.endpoint_type == "chat":
                 payload["messages"] = [{"role": "user", "content": "Hi"}]
@@ -171,19 +172,20 @@ class OllamaLLM:
                 payload["prompt"] = "Hi"
                 payload["options"] = {"num_predict": 1}
             
-            response = requests.post(url, json=payload, timeout=15)
+            async with httpx.AsyncClient() as client:
+                response = await client.post(url, json=payload, timeout=15)
             
-            if response.status_code == 200:
-                self.model_loaded = True
-            elif response.status_code == 404 and self.endpoint_type == "chat":
-                self.endpoint_type = "generate"
-                self.model_loaded = False
+                if response.status_code == 200:
+                    self.model_loaded = True
+                elif response.status_code == 404 and self.endpoint_type == "chat":
+                    self.endpoint_type = "generate"
+                    self.model_loaded = False
         except Exception:
             pass
     
-    def _build_payload(self, prompt: str, stream: bool) -> tuple[str, dict]:
+    async def _build_payload(self, prompt: str, stream: bool) -> tuple[str, dict]:
         """Build request payload based on endpoint type"""
-        self._detect_endpoint()
+        await self._detect_endpoint()
         
         common_options = {"temperature": self.temperature}
         
@@ -218,112 +220,121 @@ class OllamaLLM:
             return self.cold_start_timeout
         return self.timeout
 
-    def invoke(self, prompt: str) -> str:
+    async def invoke(self, prompt: str) -> str:
         """Invoke the model with a prompt"""
         current_timeout = self._get_timeout()
         try:
             if not self.model_loaded:
-                self._verify_endpoint_with_minimal_call()
+                await self._verify_endpoint_with_minimal_call()
             
-            url, payload = self._build_payload(prompt, stream=False)
+            url, payload = await self._build_payload(prompt, stream=False)
 
-            response = requests.post(url, json=payload, timeout=current_timeout)
+            async with httpx.AsyncClient() as client:
+                response = await client.post(url, json=payload, timeout=current_timeout)
             
-            if response.status_code == 404 and self.endpoint_type == "chat":
-                self.endpoint_type = "generate"
-                url, payload = self._build_payload(prompt, stream=False)
-                response = requests.post(url, json=payload, timeout=current_timeout)
+                if response.status_code == 404 and self.endpoint_type == "chat":
+                    self.endpoint_type = "generate"
+                    url, payload = await self._build_payload(prompt, stream=False)
+                    response = await client.post(url, json=payload, timeout=current_timeout)
             
-            response.raise_for_status()
-            self.model_loaded = True
-            return self._extract_content(response.json())
+                response.raise_for_status()
+                self.model_loaded = True
+                return self._extract_content(response.json())
         
-        except requests.exceptions.HTTPError as e:
+        except httpx.HTTPStatusError as e:
             if e.response.status_code == 404:
                 raise ValueError(f"Model '{self.model}' not found. Pull it using: ollama pull {self.model}")
             raise ValueError(f"Model error: {str(e)}")
-        except requests.exceptions.Timeout:
+        except httpx.TimeoutException:
             raise ValueError(f"Request timed out after {current_timeout}s")
         except Exception as e:
             raise ValueError(f"Failed to communicate with model: {str(e)}")
     
-    def stream(self, prompt: str) -> Iterator[str]:
+    async def stream(self, prompt: str) -> AsyncIterator[str]:
         """Stream the model's response with optimized timeout handling"""
-        response = None
         
         # Separate connect timeout (fast fail) from read timeout (patient streaming)
         # Connect timeout: 30s to establish connection
         # Read timeout: None to allow slow token generation from large models
         connect_timeout = 30
         read_timeout = None  # Infinite read timeout for streaming
-        timeout = (connect_timeout, read_timeout)
+        timeout = httpx.Timeout(connect_timeout, read=read_timeout)
         
         try:
             if not self.model_loaded:
-                self._verify_endpoint_with_minimal_call()
+                await self._verify_endpoint_with_minimal_call()
             
-            url, payload = self._build_payload(prompt, stream=True)
+            url, payload = await self._build_payload(prompt, stream=True)
             
-            response = requests.post(url, json=payload, timeout=timeout, stream=True)
-            
-            if response.status_code == 404 and self.endpoint_type == "chat":
-                self.endpoint_type = "generate"
-                url, payload = self._build_payload(prompt, stream=True)
-                response = requests.post(url, json=payload, timeout=timeout, stream=True)
-            
-            response.raise_for_status()
-            first_chunk = True
-            
-            try:
-                for line in response.iter_lines(decode_unicode=True, chunk_size=1, delimiter=b'\n'):
-                    if line:
-                        try:
-                            data = json.loads(line)
-                            content = self._extract_content(data)
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                async with client.stream("POST", url, json=payload) as response:
+                    
+                    if response.status_code == 404 and self.endpoint_type == "chat":
+                        self.endpoint_type = "generate"
+                        url, payload = await self._build_payload(prompt, stream=True)
+                        async with client.stream("POST", url, json=payload) as response:
+                            response.raise_for_status()
+                            first_chunk = True
                             
-                            if first_chunk and content:
-                                self.model_loaded = True
-                                first_chunk = False
+                            try:
+                                async for line in response.aiter_lines():
+                                    if line:
+                                        try:
+                                            data = json.loads(line)
+                                            content = self._extract_content(data)
+                                            
+                                            if first_chunk and content:
+                                                self.model_loaded = True
+                                                first_chunk = False
 
-                            if content:
-                                yield content
-                            
-                            if data.get("done", False):
-                                break
-                        except json.JSONDecodeError:
-                            continue
-            except GeneratorExit:
-                logger.info("Stream generator closed by client")
-                if response is not None:
-                    try:
-                        response.close()
-                    except:
-                        pass
-                raise
+                                            if content:
+                                                yield content
+                                            
+                                            if data.get("done", False):
+                                                break
+                                        except json.JSONDecodeError:
+                                            continue
+                            except GeneratorExit:
+                                logger.info("Stream generator closed by client")
+                                raise
+                    else:
+                        response.raise_for_status()
+                        first_chunk = True
+                        
+                        try:
+                            async for line in response.aiter_lines():
+                                if line:
+                                    try:
+                                        data = json.loads(line)
+                                        content = self._extract_content(data)
+                                        
+                                        if first_chunk and content:
+                                            self.model_loaded = True
+                                            first_chunk = False
+
+                                        if content:
+                                            yield content
+                                        
+                                        if data.get("done", False):
+                                            break
+                                    except json.JSONDecodeError:
+                                        continue
+                        except GeneratorExit:
+                            logger.info("Stream generator closed by client")
+                            raise
                     
         except GeneratorExit:
             logger.info("Stream interrupted by client disconnect")
-            if response is not None:
-                try:
-                    response.close()
-                except:
-                    pass
             raise
-        except requests.exceptions.Timeout as e:
+        except httpx.TimeoutException as e:
             # Connection timeout (not read timeout since read_timeout=None)
             error_msg = f"Failed to connect to Ollama within {connect_timeout}s. Please check if Ollama is running."
             logger.error(f"{error_msg} Error: {e}")
             raise ValueError(error_msg)
-        except requests.exceptions.HTTPError as e:
+        except httpx.HTTPStatusError as e:
             if e.response.status_code == 404:
                 raise ValueError(f"Model '{self.model}' not found. Pull it using: ollama pull {self.model}")
             raise ValueError(f"Streaming error: {str(e)}")
         except Exception as e:
             logger.error(f"Stream error: {str(e)}")
             raise ValueError(f"Failed to stream: {str(e)}")
-        finally:
-            if response is not None:
-                try:
-                    response.close()
-                except Exception:
-                    pass
