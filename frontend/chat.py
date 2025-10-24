@@ -115,9 +115,11 @@ def render_chat(api_client, health_data: Dict, model: str):
                 sources = []
                 stopped = False
                 error_occurred = False
+                stream_generator = None
                 
                 try:
-                    for data in api_client.query_stream(user_prompt, model=model):
+                    stream_generator = api_client.query_stream(user_prompt, model=model)
+                    for data in stream_generator:
                         # Check stop flag
                         if st.session_state.stop_generation:
                             stopped = True
@@ -180,6 +182,13 @@ def render_chat(api_client, health_data: Dict, model: str):
                     ToastNotification.show(f"Error: {str(e)}", "error")
                 
                 finally:
+                    # Ensure generator is properly closed to clean up connections
+                    if stream_generator is not None:
+                        try:
+                            stream_generator.close()
+                        except Exception:
+                            pass
+                    
                     # Always reset state
                     st.session_state.is_generating = False
                     st.session_state.stop_generation = False
