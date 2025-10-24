@@ -71,7 +71,7 @@ def render_header_controls():
             all_similarity_scores.extend(msg.get("similarity_scores", []))
     
     if all_sources or chat_history:
-        col1, col2 = st.columns([1, 1])
+        col1, col2, col3 = st.columns([2, 1, 1])
         
         with col1:
             # Sources view
@@ -98,42 +98,46 @@ def render_header_controls():
                             st.markdown(f"📄 **{source}** (Used: {count}x)")
         
         with col2:
+            # Save button
+            if chat_history:
+                if st.button("💾 Save to History", use_container_width=True, disabled=is_generating):
+                    save_conversation()
+                    ToastNotification.show("Conversation saved to history", "success")
+                    st.rerun()
+        
+        with col3:
             # Export dropdown
             if chat_history:
-                with st.expander("💾 Save & Export", expanded=False):
-                    if is_generating:
-                        st.info("⏳ Available after response completes")
-                    else:
-                        # Save to history button
-                        if st.button("💾 Save to History", use_container_width=True, disabled=is_generating):
-                            save_conversation()
-                            ToastNotification.show("Conversation saved to history", "success")
-                            st.rerun()
-                        
-                        st.markdown("**Export:**")
-                        col_json, col_md = st.columns(2)
-                        
-                        with col_json:
-                            json_export = export_chat_json(chat_history)
-                            st.download_button(
-                                label="JSON",
-                                data=json_export,
-                                file_name=f"chat_{st.session_state.selected_document}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
-                                mime="application/json",
-                                use_container_width=True,
-                                disabled=is_generating
-                            )
-                        
-                        with col_md:
-                            md_export = export_chat_markdown(chat_history)
-                            st.download_button(
-                                label="MD",
-                                data=md_export,
-                                file_name=f"chat_{st.session_state.selected_document}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.md",
-                                mime="text/markdown",
-                                use_container_width=True,
-                                disabled=is_generating
-                            )
+                export_option = st.selectbox(
+                    "Export",
+                    options=["Select format...", "JSON", "Markdown"],
+                    key="export_format_selector",
+                    disabled=is_generating,
+                    label_visibility="collapsed"
+                )
+                
+                if export_option == "JSON":
+                    json_export = export_chat_json(chat_history)
+                    st.download_button(
+                        label="📥 Download JSON",
+                        data=json_export,
+                        file_name=f"chat_{st.session_state.selected_document}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
+                        mime="application/json",
+                        use_container_width=True,
+                        disabled=is_generating
+                    )
+                    st.session_state.export_format_selector = "Select format..."
+                elif export_option == "Markdown":
+                    md_export = export_chat_markdown(chat_history)
+                    st.download_button(
+                        label="📥 Download MD",
+                        data=md_export,
+                        file_name=f"chat_{st.session_state.selected_document}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.md",
+                        mime="text/markdown",
+                        use_container_width=True,
+                        disabled=is_generating
+                    )
+                    st.session_state.export_format_selector = "Select format..."
 
 
 def render_chat(api_client, health_data: Dict, model: str):

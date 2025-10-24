@@ -96,10 +96,21 @@ async def upload_document(file: UploadFile = File(...)):
         
         embeddings_model = model_manager.get_embeddings_model()
         texts = [doc["page_content"] for doc in documents]
-        embeddings = embeddings_model.embed_documents(texts)
+        
+        try:
+            embeddings = embeddings_model.embed_documents(texts)
+        except Exception as e:
+            logger.error(f"Embedding generation failed for {file.filename}: {e}")
+            error_msg = str(e)
+            if "timeout" in error_msg.lower():
+                raise ValueError("Embedding generation timed out. The file might be too large or complex. Try splitting it into smaller files.")
+            elif "connection" in error_msg.lower():
+                raise ValueError("Failed to connect to Ollama for embedding generation. Please ensure Ollama is running.")
+            else:
+                raise ValueError(f"Embedding generation failed: {error_msg[:200]}")
         
         if not embeddings or len(embeddings) != len(documents):
-            raise ValueError("Failed to generate embeddings")
+            raise ValueError("Failed to generate embeddings - output mismatch")
         
         vector_store.add_documents(documents, embeddings)
         
@@ -178,6 +189,7 @@ Respond naturally as the document. Your response:"""
         if query.stream:
             async def generate():
                 disconnected = False
+                stream_generator = None
                 try:
                     metadata = {
                         "sources": sources,
@@ -189,7 +201,8 @@ Respond naturally as the document. Your response:"""
                     }
                     yield f"data: {json.dumps(metadata)}\n\n"
 
-                    for chunk in llm.stream(prompt):
+                    stream_generator = llm.stream(prompt)
+                    for chunk in stream_generator:
                         if await request.is_disconnected():
                             disconnected = True
                             logger.info("Client disconnected during streaming")
@@ -209,13 +222,26 @@ Respond naturally as the document. Your response:"""
                         logger.info(f"Query interrupted after {processing_time:.2f}s")
                 except GeneratorExit:
                     logger.info("Generator closed by client disconnect")
+                    if stream_generator is not None:
+                        try:
+                            stream_generator.close()
+                        except:
+                            pass
                     raise
                 except Exception as e:
                     logger.error(f"Streaming error: {e}")
-                    try:
-                        yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
-                    except:
-                        pass
+                    logger.debug(traceback.format_exc())
+                    if not disconnected:
+                        try:
+                            yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
+                        except:
+                            pass
+                finally:
+                    if stream_generator is not None:
+                        try:
+                            stream_generator.close()
+                        except:
+                            pass
             
             return StreamingResponse(generate(), media_type="text/event-stream")
         else:

@@ -208,12 +208,12 @@ class OllamaLLM:
 
     def invoke(self, prompt: str) -> str:
         """Invoke the model with a prompt"""
+        current_timeout = self._get_timeout()
         try:
             if not self.model_loaded:
                 self._verify_endpoint_with_minimal_call()
             
             url, payload = self._build_payload(prompt, stream=False)
-            current_timeout = self._get_timeout()
 
             response = requests.post(url, json=payload, timeout=current_timeout)
             
@@ -238,12 +238,12 @@ class OllamaLLM:
     def stream(self, prompt: str) -> Iterator[str]:
         """Stream the model's response"""
         response = None
+        current_timeout = self._get_timeout()
         try:
             if not self.model_loaded:
                 self._verify_endpoint_with_minimal_call()
             
             url, payload = self._build_payload(prompt, stream=True)
-            current_timeout = self._get_timeout()
             
             response = requests.post(url, json=payload, timeout=current_timeout, stream=True)
             
@@ -256,7 +256,7 @@ class OllamaLLM:
             first_chunk = True
             
             try:
-                for line in response.iter_lines():
+                for line in response.iter_lines(decode_unicode=True, chunk_size=1):
                     if line:
                         try:
                             data = json.loads(line)
@@ -275,13 +275,20 @@ class OllamaLLM:
                             continue
             except GeneratorExit:
                 logger.info("Stream generator closed by client")
-                raise
-            finally:
                 if response is not None:
-                    response.close()
+                    try:
+                        response.close()
+                    except:
+                        pass
+                raise
                     
         except GeneratorExit:
             logger.info("Stream interrupted by client disconnect")
+            if response is not None:
+                try:
+                    response.close()
+                except:
+                    pass
             raise
         except requests.exceptions.Timeout:
             error_msg = f"Streaming request timed out after {current_timeout}s. Please try again."
@@ -298,5 +305,5 @@ class OllamaLLM:
             if response is not None:
                 try:
                     response.close()
-                except:
+                except Exception:
                     pass
