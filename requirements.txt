@@ -1,4 +1,5 @@
 fastapi>=0.119.0
+httpx>=0.27.0
 langchain>=0.3.27
 langchain-community>=0.3.31
 langchain-ollama>=0.3.10
@@ -38,3 +39,4 @@ scikit-learn
 streamlit
 unstructured
 uvicorn
+httpx

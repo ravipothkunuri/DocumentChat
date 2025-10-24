@@ -3,8 +3,8 @@ Pydantic models and LLM client
 """
 import json
 import logging
-import requests
-from typing import Dict, Any, Optional, Iterator
+import httpx
+from typing import Dict, Any, Optional, AsyncIterator
 from pydantic import BaseModel, Field, validator
 
 from backend.config import OLLAMA_BASE_URL
