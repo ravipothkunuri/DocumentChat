@@ -20,12 +20,12 @@ def apply_custom_css():
         padding: 0.5rem 0;
     }
     
-    /* Sidebar collapse button - Fixed positioning */
+    /* Sidebar collapse button - Adjusted positioning to avoid overlap */
     button[kind="header"] {
         position: fixed !important;
-        top: 0.5rem !important;
-        left: 0.5rem !important;
-        z-index: 999999 !important;
+        top: 0.75rem !important;
+        left: 0.75rem !important;
+        z-index: 999 !important;
         background: rgba(102, 126, 234, 0.1) !important;
         border: 2px solid rgba(102, 126, 234, 0.3) !important;
         border-radius: 8px !important;
@@ -70,17 +70,30 @@ def apply_custom_css():
         min-width: 320px !important;
         max-width: 320px !important;
         transition: all 0.3s ease-in-out !important;
+        overflow: hidden !important;
     }
     
     section[data-testid="stSidebar"] > div {
         width: 320px !important;
         padding-top: 4rem !important;
+        transition: all 0.3s ease-in-out !important;
+        overflow: hidden !important;
     }
     
     /* Collapsed sidebar adjustments */
     section[data-testid="stSidebar"][aria-expanded="false"] {
         width: 0 !important;
         min-width: 0 !important;
+        transition: all 0.3s ease-in-out !important;
+        overflow: hidden !important;
+    }
+    
+    section[data-testid="stSidebar"][aria-expanded="false"] > div {
+        width: 0 !important;
+        min-width: 0 !important;
+        transition: all 0.3s ease-in-out !important;
+        overflow: hidden !important;
+        opacity: 0 !important;
     }
     
     /* Main content area adjustment when sidebar is collapsed */
