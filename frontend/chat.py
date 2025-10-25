@@ -234,81 +234,101 @@ def render_chat(api_client, health_data: Dict, model: str):
                 error_occurred = False
                 stream_generator = None
                 
-                try:
-                    stream_generator = api_client.query_stream(user_prompt, model=model)
-                    for data in stream_generator:
-                        if st.session_state.stop_generation:
-                            stopped = True
-                            thinking_placeholder.empty()
-                            if response:
-                                response += "\n\n*[Interrupted by user]*"
-                            else:
-                                response = "*[Interrupted before content was generated]*"
-                            response_placeholder.markdown(response)
-                            break
-                        
-                        if data.get('type') == 'metadata':
-                            sources = data.get('sources', [])
-                            similarity_scores = data.get('similarity_scores', [])
-                        elif data.get('type') == 'heartbeat':
-                            # Keep-alive heartbeat - just log and continue
-                            pass
-                        elif data.get('type') == 'content':
-                            thinking_placeholder.empty()
-                            response += data.get('content', '')
-                            response_placeholder.markdown(response + "▌")
-                        elif data.get('type') == 'done':
-                            thinking_placeholder.empty()
-                            response_placeholder.markdown(response)
-                        elif data.get('type') == 'error':
-                            thinking_placeholder.empty()
-                            error_msg = data.get('message', 'Unknown error')
-                            error = f"❌ Error: {error_msg}"
-                            response_placeholder.error(error)
-                            response = error
-                            error_occurred = True
-                            break
-                    
+                # Check if stop was already clicked before starting stream
+                if st.session_state.stop_generation:
+                    stopped = True
                     thinking_placeholder.empty()
-                    if response and not error_occurred:
-                        response_placeholder.markdown(response)
-                    
+                    response = "*[Generation cancelled]*"
+                    response_placeholder.markdown(response)
                     stop_button_placeholder.empty()
                     
-                    # Save message
+                    # Save cancelled message
                     add_message({
                         "role": "assistant",
-                        "content": response if response else "*[No response generated]*",
-                        "sources": sources,
-                        "similarity_scores": similarity_scores,
-                        "timestamp": datetime.now().isoformat(),
-                        "stopped": stopped
-                    })
-                    
-                    if stopped:
-                        ToastNotification.show("Generation stopped", "warning")
-                        
-                except Exception as e:
-                    thinking_placeholder.empty()
-                    error = f"❌ Error: {str(e)}"
-                    response_placeholder.error(error)
-                    stop_button_placeholder.empty()
-                    add_message({
-                        "role": "assistant",
-                        "content": error,
+                        "content": response,
                         "sources": [],
-                        "timestamp": datetime.now().isoformat()
+                        "similarity_scores": [],
+                        "timestamp": datetime.now().isoformat(),
+                        "stopped": True
                     })
-                    ToastNotification.show(f"Error: {str(e)}", "error")
-                
-                finally:
-                    # Explicitly close the generator to clean up connections
-                    if stream_generator is not None:
-                        try:
-                            stream_generator.close()
-                        except Exception:
-                            pass
+                    ToastNotification.show("Generation stopped", "warning")
+                else:
+                    try:
+                        stream_generator = api_client.query_stream(user_prompt, model=model)
+                        for data in stream_generator:
+                            if st.session_state.stop_generation:
+                                stopped = True
+                                thinking_placeholder.empty()
+                                if response:
+                                    response += "\n\n*[Interrupted by user]*"
+                                else:
+                                    response = "*[Interrupted before content was generated]*"
+                                response_placeholder.markdown(response)
+                                break
+                            
+                            if data.get('type') == 'metadata':
+                                sources = data.get('sources', [])
+                                similarity_scores = data.get('similarity_scores', [])
+                            elif data.get('type') == 'heartbeat':
+                                # Keep-alive heartbeat - just log and continue
+                                pass
+                            elif data.get('type') == 'content':
+                                thinking_placeholder.empty()
+                                response += data.get('content', '')
+                                response_placeholder.markdown(response + "▌")
+                            elif data.get('type') == 'done':
+                                thinking_placeholder.empty()
+                                response_placeholder.markdown(response)
+                            elif data.get('type') == 'error':
+                                thinking_placeholder.empty()
+                                error_msg = data.get('message', 'Unknown error')
+                                error = f"❌ Error: {error_msg}"
+                                response_placeholder.error(error)
+                                response = error
+                                error_occurred = True
+                                break
+                        
+                        thinking_placeholder.empty()
+                        if response and not error_occurred:
+                            response_placeholder.markdown(response)
+                        
+                        stop_button_placeholder.empty()
+                        
+                        # Save message
+                        add_message({
+                            "role": "assistant",
+                            "content": response if response else "*[No response generated]*",
+                            "sources": sources,
+                            "similarity_scores": similarity_scores,
+                            "timestamp": datetime.now().isoformat(),
+                            "stopped": stopped
+                        })
+                        
+                        if stopped:
+                            ToastNotification.show("Generation stopped", "warning")
+                            
+                    except Exception as e:
+                        thinking_placeholder.empty()
+                        error = f"❌ Error: {str(e)}"
+                        response_placeholder.error(error)
+                        stop_button_placeholder.empty()
+                        add_message({
+                            "role": "assistant",
+                            "content": error,
+                            "sources": [],
+                            "timestamp": datetime.now().isoformat()
+                        })
+                        ToastNotification.show(f"Error: {str(e)}", "error")
                     
-                    st.session_state.is_generating = False
-                    st.session_state.stop_generation = False
-                    st.rerun()
+                    finally:
+                        # Explicitly close the generator to clean up connections
+                        if stream_generator is not None:
+                            try:
+                                stream_generator.close()
+                            except Exception:
+                                pass
+                
+                # Always clean up and reset state
+                st.session_state.is_generating = False
+                st.session_state.stop_generation = False
+                st.rerun()

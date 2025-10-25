@@ -24,3 +24,17 @@ python-multipart
 requests
 scikit-learn
 streamlit
+fastapi
+httpx
+langchain
+langchain-community
+langchain-ollama
+langchain-text-splitters
+numpy
+pydantic
+pypdf
+python-multipart
+requests
+scikit-learn
+streamlit
+uvicorn
