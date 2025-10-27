@@ -1,14 +1,12 @@
-"""
-Chat interface components - Using Streamlit's native chat input with manual stop control
-"""
+"""Async chat interface"""
 import streamlit as st
+import asyncio
 import random
 from datetime import datetime
 from typing import Dict
 from session_state import get_current_chat, add_message
 from toast import ToastNotification
 
-# Random thinking messages
 THINKING_MESSAGES = [
     "🤔 Analyzing document...",
     "💭 Thinking...",
@@ -16,20 +14,10 @@ THINKING_MESSAGES = [
     "🔍 Searching for answers...",
     "⚡ Processing your question...",
     "🧠 Understanding the context...",
-    "📚 Consulting the documents...",
-    "🔎 Finding relevant information...",
-    "💡 Gathering insights...",
-    "🎯 Locating the answer...",
-    "📝 Reviewing the content...",
-    "🌟 Working on it...",
-    "⏳ Just a moment...",
-    "🚀 Generating response...",
-    "🔮 Exploring the knowledge base..."
 ]
 
-
-def render_chat(api_client, health_data: Dict, model: str):
-    """Render chat interface with native Streamlit components"""
+def render_chat(api_client, health_data: Dict):
+    """Render async chat interface"""
     
     if health_data and health_data.get('document_count', 0) == 0:
         st.info("👋 **Welcome!** Upload documents to start.")
@@ -51,7 +39,7 @@ def render_chat(api_client, health_data: Dict, model: str):
         if not ollama.get('available'):
             ToastNotification.show("Ollama unavailable", "warning")
     
-    # Display chat history (excluding the message being generated)
+    # Display chat history
     chat_history = get_current_chat()
     messages_to_display = chat_history[:-1] if st.session_state.is_generating else chat_history
     
@@ -61,7 +49,7 @@ def render_chat(api_client, health_data: Dict, model: str):
             if msg.get("stopped"):
                 st.caption("⚠️ Generation was stopped")
     
-    # Use native Streamlit chat input
+    # Chat input
     prompt = st.chat_input(
         f"💭 Ask about {st.session_state.selected_document}...",
         disabled=st.session_state.is_generating
@@ -69,127 +57,96 @@ def render_chat(api_client, health_data: Dict, model: str):
     
     # Handle new prompt
     if prompt and not st.session_state.is_generating:
-        # Add user message
         add_message({
             "role": "user",
             "content": prompt,
             "timestamp": datetime.now().isoformat()
         })
-        
-        # Start generation
         st.session_state.is_generating = True
         st.session_state.stop_generation = False
         st.rerun()
     
-    # Process generation if in progress
+    # Process generation asynchronously
     if st.session_state.is_generating:
-        # Get the last user message
         chat_history = get_current_chat()
         if chat_history and chat_history[-1]["role"] == "user":
             user_prompt = chat_history[-1]["content"]
             
-            # Display the current user message (since we excluded it from the loop above)
             with st.chat_message("user"):
                 st.markdown(user_prompt)
             
-            # Generate response
             with st.chat_message("assistant"):
-                # Show random thinking indicator
                 thinking_placeholder = st.empty()
                 thinking_message = f"*{random.choice(THINKING_MESSAGES)}*"
                 thinking_placeholder.markdown(thinking_message)
                 
-                # Create columns for response and stop button
                 col1, col2 = st.columns([6, 1])
                 
                 with col1:
                     response_placeholder = st.empty()
                 
                 with col2:
-                    stop_button_placeholder = st.empty()
-                    if stop_button_placeholder.button("⏹️", key="stop_inline", help="Stop generation", use_container_width=True):
+                    if st.button("⏹️", key="stop_inline", help="Stop", use_container_width=True):
                         st.session_state.stop_generation = True
                         st.rerun()
                 
-                response = ""
-                sources = []
-                stopped = False
-                error_occurred = False
-                stream_generator = None
+                # Run async streaming
+                response, stopped = asyncio.run(
+                    process_stream(api_client, user_prompt, thinking_placeholder, response_placeholder)
+                )
                 
-                try:
-                    stream_generator = api_client.query_stream(user_prompt, model=model)
-                    for data in stream_generator:
-                        # Check stop flag
-                        if st.session_state.stop_generation:
-                            stopped = True
-                            thinking_placeholder.empty()  # Clear thinking indicator
-                            if response:
-                                response += "\n\n*[Interrupted by user]*"
-                            else:
-                                response = "*[Interrupted before content was generated]*"
-                            response_placeholder.markdown(response)
-                            break
-                        
-                        if data.get('type') == 'metadata':
-                            sources = data.get('sources', [])
-                            thinking_placeholder.empty()  # Clear thinking indicator when content starts
-                        elif data.get('type') == 'content':
-                            thinking_placeholder.empty()  # Clear thinking indicator
-                            response += data.get('content', '')
-                            response_placeholder.markdown(response + "▌")
-                        elif data.get('type') == 'done':
-                            response_placeholder.markdown(response)
-                        elif data.get('type') == 'error':
-                            thinking_placeholder.empty()  # Clear thinking indicator
-                            error_msg = data.get('message', 'Unknown error')
-                            error = f"❌ Error: {error_msg}"
-                            response_placeholder.error(error)
-                            response = error
-                            error_occurred = True
-                            break
-                    
-                    thinking_placeholder.empty()  # Clear thinking indicator when done
-                    if response and not error_occurred:
-                        response_placeholder.markdown(response)
-                    
-                    # Clear stop button after generation completes
-                    stop_button_placeholder.empty()
-                    
-                    # Save assistant message
-                    add_message({
-                        "role": "assistant",
-                        "content": response if response else "*[No response generated]*",
-                        "sources": sources,
-                        "timestamp": datetime.now().isoformat(),
-                        "stopped": stopped
-                    })
-                    
-                    if stopped:
-                        ToastNotification.show("Generation stopped", "warning")
-                        
-                except Exception as e:
-                    thinking_placeholder.empty()  # Clear thinking indicator
-                    error = f"❌ Error: {str(e)}"
-                    response_placeholder.error(error)
-                    stop_button_placeholder.empty()  # Clear stop button on error
-                    add_message({
-                        "role": "assistant",
-                        "content": error,
-                        "sources": [],
-                        "timestamp": datetime.now().isoformat()
-                    })
-                    ToastNotification.show(f"Error: {str(e)}", "error")
+                add_message({
+                    "role": "assistant",
+                    "content": response or "*[No response generated]*",
+                    "timestamp": datetime.now().isoformat(),
+                    "stopped": stopped
+                })
                 
-                finally:
-                    # Ensure generator is properly closed to clean up connections
-                    if stream_generator is not None:
-                        try:
-                            stream_generator.close()
-                        except Exception:
-                            pass
-                    
-                    # Always reset state
-                    st.session_state.is_generating = False
-                    st.session_state.stop_generation = False
-                    st.rerun()
+                if stopped:
+                    ToastNotification.show("Generation stopped", "warning")
+                
+                st.session_state.is_generating = False
+                st.session_state.stop_generation = False
+                st.rerun()
+
+async def process_stream(api_client, prompt: str, thinking_placeholder, response_placeholder) -> tuple[str, bool]:
+    """Process async stream with cancellation support"""
+    response = ""
+    stopped = False
+    
+    try:
+        async for data in api_client.query_stream(prompt):
+            if st.session_state.stop_generation:
+                stopped = True
+                thinking_placeholder.empty()
+                response += "\n\n*[Interrupted by user]*" if response else "*[Interrupted]*"
+                response_placeholder.markdown(response)
+                break
+            
+            if data.get('type') == 'metadata':
+                thinking_placeholder.empty()
+            elif data.get('type') == 'content':
+                thinking_placeholder.empty()
+                response += data.get('content', '')
+                response_placeholder.markdown(response + "▌")
+            elif data.get('type') == 'done':
+                response_placeholder.markdown(response)
+            elif data.get('type') == 'error':
+                thinking_placeholder.empty()
+                error = f"❌ Error: {data.get('message', 'Unknown error')}"
+                response_placeholder.error(error)
+                response = error
+                break
+        
+        thinking_placeholder.empty()
+        if response:
+            response_placeholder.markdown(response)
+            
+    except Exception as e:
+        thinking_placeholder.empty()
+        error = f"❌ Error: {str(e)}"
+        response_placeholder.error(error)
+        response = error
+        ToastNotification.show(f"Error: {str(e)}", "error")
+    
+    return response, stopped
