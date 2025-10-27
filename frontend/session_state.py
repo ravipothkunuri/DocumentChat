@@ -1,9 +1,6 @@
-"""
-Session state management for the RAG application
-"""
+"""Session state management"""
 import streamlit as st
 from typing import List, Dict
-
 
 def init_session_state():
     """Initialize session state variables"""
@@ -20,28 +17,19 @@ def init_session_state():
         if key not in st.session_state:
             st.session_state[key] = value
 
-
 def get_current_chat() -> List[Dict]:
     """Get chat history for selected document"""
     doc = st.session_state.selected_document
-    if doc:
-        if doc not in st.session_state.document_chats:
-            st.session_state.document_chats[doc] = []
-        return st.session_state.document_chats[doc]
-    return []
-
+    if doc and doc not in st.session_state.document_chats:
+        st.session_state.document_chats[doc] = []
+    return st.session_state.document_chats.get(doc, [])
 
 def add_message(message: Dict):
     """Add message to current chat"""
-    doc = st.session_state.selected_document
-    if doc:
-        if doc not in st.session_state.document_chats:
-            st.session_state.document_chats[doc] = []
-        st.session_state.document_chats[doc].append(message)
-
+    if doc := st.session_state.selected_document:
+        st.session_state.document_chats.setdefault(doc, []).append(message)
 
 def clear_chat():
     """Clear current chat history"""
-    doc = st.session_state.selected_document
-    if doc:
+    if doc := st.session_state.selected_document:
         st.session_state.document_chats[doc] = []
