@@ -9,7 +9,7 @@ from toast import ToastNotification
 from config import API_BASE_URL
 
 st.set_page_config(
-    page_title="RAG Chat",
+    page_title="Chat With Documents using AI",
     page_icon="📚",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -25,7 +25,7 @@ if not is_healthy:
     st.stop()
 
 ToastNotification.render_pending()
-st.markdown('<div class="main-header">📚 RAG Chat</div>', unsafe_allow_html=True)
+st.markdown('<div class="main-header">📚 Chat With Documents using AI</div>', unsafe_allow_html=True)
 
 render_sidebar(api_client)
 render_chat(api_client, health_data)
