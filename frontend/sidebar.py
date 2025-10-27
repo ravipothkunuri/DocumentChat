@@ -105,8 +105,10 @@ def render_sidebar(api_client):
                 st.rerun()
         
         # Display file requirements
-        st.caption(f"📝 Formats: {', '.join(ALLOWED_EXTENSIONS).upper()}")
-        st.caption(f"📏 Max size: {MAX_FILE_SIZE_MB}MB per file")
+        with st.expander("ℹ️ Upload Requirements", expanded=False):
+            st.caption(f"**Formats:** {', '.join(ALLOWED_EXTENSIONS).upper()}")
+            st.caption(f"**Max size:** {MAX_FILE_SIZE_MB} MB per file")
+            st.caption(f"**Multiple files:** Supported")
         
         # Clear chat button
         if st.session_state.selected_document and get_current_chat():
