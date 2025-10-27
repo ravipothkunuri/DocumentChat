@@ -1,11 +1,11 @@
 """
-Custom CSS styling for the RAG application
+Custom CSS styling for the RAG application - FIXED VERSION
 """
 import streamlit as st
 
 
 def apply_custom_css():
-    """Apply custom CSS - Respects system theme"""
+    """Apply custom CSS - Respects system theme with fixed animations"""
     st.markdown("""
     <style>
     /* Main header styling */
@@ -20,17 +20,17 @@ def apply_custom_css():
         padding: 0.5rem 0;
     }
     
-    /* Sidebar collapse button - Adjusted positioning to avoid overlap */
+    /* FIXED: Sidebar toggle button - Moved down to avoid Streamlit header overlap */
     button[kind="header"] {
         position: fixed !important;
-        top: 0.75rem !important;
+        top: 3.5rem !important;  /* Changed from 0.75rem to avoid overlap */
         left: 0.75rem !important;
         z-index: 999 !important;
         background: rgba(102, 126, 234, 0.1) !important;
         border: 2px solid rgba(102, 126, 234, 0.3) !important;
         border-radius: 8px !important;
         padding: 0.5rem !important;
-        transition: all 0.3s ease !important;
+        transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1) !important;
     }
     
     button[kind="header"]:hover {
@@ -64,41 +64,48 @@ def apply_custom_css():
         box-shadow: 0 6px 20px rgba(102, 126, 234, 0.4);
     }
     
-    /* Sidebar - Fixed width with smooth transitions */
+    /* FIXED: Sidebar - Smooth animations with proper timing */
     section[data-testid="stSidebar"] {
         width: 320px !important;
         min-width: 320px !important;
         max-width: 320px !important;
-        transition: all 0.3s ease-in-out !important;
+        transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1) !important;
         overflow: hidden !important;
     }
     
     section[data-testid="stSidebar"] > div {
         width: 320px !important;
         padding-top: 4rem !important;
-        transition: all 0.3s ease-in-out !important;
-        overflow: hidden !important;
+        transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1) !important;
+        overflow-y: auto !important;
+        overflow-x: hidden !important;
     }
     
-    /* Collapsed sidebar adjustments */
+    /* FIXED: Collapsed sidebar - Cleaner animation */
     section[data-testid="stSidebar"][aria-expanded="false"] {
         width: 0 !important;
         min-width: 0 !important;
-        transition: all 0.3s ease-in-out !important;
-        overflow: hidden !important;
+        max-width: 0 !important;
+        transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1) !important;
     }
     
     section[data-testid="stSidebar"][aria-expanded="false"] > div {
         width: 0 !important;
         min-width: 0 !important;
-        transition: all 0.3s ease-in-out !important;
-        overflow: hidden !important;
+        transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1) !important;
         opacity: 0 !important;
+        transform: translateX(-100%) !important;
     }
     
-    /* Main content area adjustment when sidebar is collapsed */
+    /* FIXED: Main content area - Smooth transition when sidebar toggles */
     .main .block-container {
-        transition: padding-left 0.3s ease-in-out !important;
+        transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1) !important;
+        max-width: 100% !important;
+    }
+    
+    /* FIXED: Prevent content jump during sidebar animation */
+    [data-testid="stAppViewContainer"] {
+        transition: padding-left 0.2s cubic-bezier(0.4, 0, 0.2, 1) !important;
     }
     
     /* Delete button - Centered */
@@ -216,6 +223,18 @@ def apply_custom_css():
         margin-bottom: 0.5rem !important;
     }
     
+    /* FIXED: Ensure Streamlit header buttons stay visible and don't overlap */
+    [data-testid="stToolbar"] {
+        z-index: 1000 !important;
+        background: transparent !important;
+    }
+    
+    /* FIXED: Streamlit's header container */
+    header[data-testid="stHeader"] {
+        z-index: 1000 !important;
+        background: transparent !important;
+    }
+    
     /* Responsive design */
     @media screen and (max-width: 768px) {
         .main-header { 
@@ -234,6 +253,11 @@ def apply_custom_css():
         
         section[data-testid="stSidebar"] > div {
             width: 280px !important;
+        }
+        
+        /* FIXED: Mobile - Move toggle button even lower if needed */
+        button[kind="header"] {
+            top: 4rem !important;
         }
     }
     
