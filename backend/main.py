@@ -25,8 +25,8 @@ async def lifespan(app: FastAPI):
 
 # Create FastAPI app
 app = FastAPI(
-    title="RAG Assistant API",
-    description="Async RAG system with Ollama",
+    title="Backend API",
+    description="Async system with Ollama",
     version="3.0.0",
     lifespan=lifespan
 )

@@ -1,11 +1,11 @@
-# RAG Assistant - Project Structure
+# DocumentChat - Project Structure
 
 This application has been modularized into separate files for better maintainability and clarity.
 
 ## File Structure
 
 ```
-rag-assistant/
+DocumentChat/
 ├── app.py                 # Main application entry point
 ├── config.py             # Configuration settings
 ├── api_client.py         # Backend API client
@@ -170,8 +170,8 @@ To customize the application:
 
 ```python
 # Test API client
-from api_client import RAGAPIClient
-client = RAGAPIClient("http://localhost:8000")
+from api_client import APIClient
+client = APIClient("http://localhost:8000")
 health_ok, data = client.health_check()
 print(f"Health: {health_ok}, Data: {data}")
 

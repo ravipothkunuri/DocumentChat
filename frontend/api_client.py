@@ -3,7 +3,7 @@ import httpx
 import json
 from typing import List, Dict, Tuple, Optional, AsyncIterator
 
-class RAGAPIClient:
+class APIClient:
     """Async API client for backend interactions"""
     
     def __init__(self, base_url: str):
