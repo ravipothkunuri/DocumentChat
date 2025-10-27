@@ -20,23 +20,48 @@ def apply_custom_css():
         padding: 0.5rem 0;
     }
     
-    /* FIXED: Sidebar toggle button - Moved down to avoid Streamlit header overlap */
-    button[kind="header"] {
-        position: fixed !important;
-        top: 3.5rem !important;  /* Changed from 0.75rem to avoid overlap */
-        left: 0.75rem !important;
-        z-index: 999 !important;
+    /* FIXED: Only target the sidebar collapse button, not Streamlit's header buttons */
+    section[data-testid="stSidebar"] button[kind="header"] {
+        position: relative !important;
+        top: auto !important;
+        left: auto !important;
+        z-index: 1 !important;
         background: rgba(102, 126, 234, 0.1) !important;
         border: 2px solid rgba(102, 126, 234, 0.3) !important;
         border-radius: 8px !important;
         padding: 0.5rem !important;
+        margin-bottom: 1rem !important;
         transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1) !important;
     }
     
-    button[kind="header"]:hover {
+    section[data-testid="stSidebar"] button[kind="header"]:hover {
         background: rgba(102, 126, 234, 0.2) !important;
         border-color: rgba(102, 126, 234, 0.5) !important;
         transform: scale(1.05) !important;
+    }
+    
+    /* FIXED: Ensure Streamlit's header toolbar stays in correct position */
+    [data-testid="stToolbar"] {
+        position: fixed !important;
+        top: 0 !important;
+        right: 0 !important;
+        z-index: 999999 !important;
+        background: transparent !important;
+    }
+    
+    /* FIXED: Streamlit's header container */
+    header[data-testid="stHeader"] {
+        position: fixed !important;
+        top: 0 !important;
+        left: 0 !important;
+        right: 0 !important;
+        z-index: 999999 !important;
+        background: transparent !important;
+    }
+    
+    /* Ensure deploy/stop buttons are always visible and positioned correctly */
+    [data-testid="stToolbar"] > div {
+        position: relative !important;
     }
     
     /* Enhanced button styling */
@@ -75,7 +100,7 @@ def apply_custom_css():
     
     section[data-testid="stSidebar"] > div {
         width: 320px !important;
-        padding-top: 4rem !important;
+        padding-top: 2rem !important;
         transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1) !important;
         overflow-y: auto !important;
         overflow-x: hidden !important;
@@ -101,6 +126,7 @@ def apply_custom_css():
     .main .block-container {
         transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1) !important;
         max-width: 100% !important;
+        padding-top: 5rem !important;
     }
     
     /* FIXED: Prevent content jump during sidebar animation */
@@ -223,18 +249,6 @@ def apply_custom_css():
         margin-bottom: 0.5rem !important;
     }
     
-    /* FIXED: Ensure Streamlit header buttons stay visible and don't overlap */
-    [data-testid="stToolbar"] {
-        z-index: 1000 !important;
-        background: transparent !important;
-    }
-    
-    /* FIXED: Streamlit's header container */
-    header[data-testid="stHeader"] {
-        z-index: 1000 !important;
-        background: transparent !important;
-    }
-    
     /* Responsive design */
     @media screen and (max-width: 768px) {
         .main-header { 
@@ -253,11 +267,6 @@ def apply_custom_css():
         
         section[data-testid="stSidebar"] > div {
             width: 280px !important;
-        }
-        
-        /* FIXED: Mobile - Move toggle button even lower if needed */
-        button[kind="header"] {
-            top: 4rem !important;
         }
     }
     
