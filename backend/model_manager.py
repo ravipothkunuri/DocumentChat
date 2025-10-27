@@ -3,7 +3,7 @@ import logging
 from typing import Optional
 from langchain_ollama import OllamaEmbeddings
 from backend.config import OLLAMA_BASE_URL, FIXED_MODEL
-from backend.ollama_client import AsyncOllamaLLM
+from backend.ollama import AsyncOllamaLLM
 from backend.config_manager import ConfigManager
 
 logger = logging.getLogger(__name__)
