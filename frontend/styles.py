@@ -1,5 +1,5 @@
 """
-Custom CSS styling for the RAG application - FIXED VERSION
+Custom CSS styling for the RAG application - WORKING VERSION
 """
 import streamlit as st
 
@@ -18,50 +18,6 @@ def apply_custom_css():
         text-align: center;
         margin-bottom: 1rem;
         padding: 0.5rem 0;
-    }
-    
-    /* FIXED: Only target the sidebar collapse button, not Streamlit's header buttons */
-    section[data-testid="stSidebar"] button[kind="header"] {
-        position: relative !important;
-        top: auto !important;
-        left: auto !important;
-        z-index: 1 !important;
-        background: rgba(102, 126, 234, 0.1) !important;
-        border: 2px solid rgba(102, 126, 234, 0.3) !important;
-        border-radius: 8px !important;
-        padding: 0.5rem !important;
-        margin-bottom: 1rem !important;
-        transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1) !important;
-    }
-    
-    section[data-testid="stSidebar"] button[kind="header"]:hover {
-        background: rgba(102, 126, 234, 0.2) !important;
-        border-color: rgba(102, 126, 234, 0.5) !important;
-        transform: scale(1.05) !important;
-    }
-    
-    /* FIXED: Ensure Streamlit's header toolbar stays in correct position */
-    [data-testid="stToolbar"] {
-        position: fixed !important;
-        top: 0 !important;
-        right: 0 !important;
-        z-index: 999999 !important;
-        background: transparent !important;
-    }
-    
-    /* FIXED: Streamlit's header container */
-    header[data-testid="stHeader"] {
-        position: fixed !important;
-        top: 0 !important;
-        left: 0 !important;
-        right: 0 !important;
-        z-index: 999999 !important;
-        background: transparent !important;
-    }
-    
-    /* Ensure deploy/stop buttons are always visible and positioned correctly */
-    [data-testid="stToolbar"] > div {
-        position: relative !important;
     }
     
     /* Enhanced button styling */
@@ -89,49 +45,35 @@ def apply_custom_css():
         box-shadow: 0 6px 20px rgba(102, 126, 234, 0.4);
     }
     
-    /* FIXED: Sidebar - Smooth animations with proper timing */
+    /* Sidebar - Smooth animations */
     section[data-testid="stSidebar"] {
         width: 320px !important;
         min-width: 320px !important;
         max-width: 320px !important;
-        transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1) !important;
-        overflow: hidden !important;
+        transition: width 0.3s ease, min-width 0.3s ease, max-width 0.3s ease !important;
     }
     
     section[data-testid="stSidebar"] > div {
         width: 320px !important;
-        padding-top: 2rem !important;
-        transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1) !important;
-        overflow-y: auto !important;
-        overflow-x: hidden !important;
+        transition: width 0.3s ease, opacity 0.3s ease !important;
     }
     
-    /* FIXED: Collapsed sidebar - Cleaner animation */
+    /* Collapsed sidebar */
     section[data-testid="stSidebar"][aria-expanded="false"] {
         width: 0 !important;
         min-width: 0 !important;
         max-width: 0 !important;
-        transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1) !important;
     }
     
     section[data-testid="stSidebar"][aria-expanded="false"] > div {
         width: 0 !important;
-        min-width: 0 !important;
-        transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1) !important;
         opacity: 0 !important;
-        transform: translateX(-100%) !important;
     }
     
-    /* FIXED: Main content area - Smooth transition when sidebar toggles */
+    /* Main content area */
     .main .block-container {
-        transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1) !important;
+        transition: padding-left 0.3s ease !important;
         max-width: 100% !important;
-        padding-top: 5rem !important;
-    }
-    
-    /* FIXED: Prevent content jump during sidebar animation */
-    [data-testid="stAppViewContainer"] {
-        transition: padding-left 0.2s cubic-bezier(0.4, 0, 0.2, 1) !important;
     }
     
     /* Delete button - Centered */
