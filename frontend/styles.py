@@ -184,28 +184,51 @@ def apply_custom_css():
         transform: translateX(4px) !important;
     }
     
-    /* Chat message styling - Conversational bubbles */
-    .stChatMessage {
-        border-radius: 16px !important;
-        padding: 1.25rem !important;
-        margin-bottom: 1rem !important;
-        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08) !important;
-        animation: slideIn 0.3s ease-out !important;
-        max-width: 85% !important;
+    /* Chat container */
+    .main .block-container {
+        background: #f8f9fa !important;
     }
     
-    /* User messages - Right aligned with distinct color */
+    /* Chat message styling - Modern speech bubbles */
+    .stChatMessage {
+        border-radius: 18px !important;
+        padding: 0.875rem 1.125rem !important;
+        margin-bottom: 0.75rem !important;
+        box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08) !important;
+        animation: slideIn 0.25s ease-out !important;
+        max-width: 65% !important;
+        position: relative !important;
+        border: none !important;
+    }
+    
+    /* User messages - Right aligned with blue bubble */
     .stChatMessage[data-testid="user-message"],
     .stChatMessage:has([data-testid*="user"]) {
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%) !important;
+        background: #4A9FF5 !important;
         color: white !important;
         margin-left: auto !important;
+        margin-right: 0 !important;
         border-bottom-right-radius: 4px !important;
+    }
+    
+    /* Speech bubble tail for user messages - points right toward avatar */
+    .stChatMessage[data-testid="user-message"]::after,
+    .stChatMessage:has([data-testid*="user"])::after {
+        content: "" !important;
+        position: absolute !important;
+        bottom: 8px !important;
+        right: -8px !important;
+        width: 0 !important;
+        height: 0 !important;
+        border-style: solid !important;
+        border-width: 8px 0 8px 10px !important;
+        border-color: transparent transparent transparent #4A9FF5 !important;
     }
     
     .stChatMessage[data-testid="user-message"] p,
     .stChatMessage:has([data-testid*="user"]) p {
         color: white !important;
+        margin: 0 !important;
     }
     
     .stChatMessage[data-testid="user-message"] .stMarkdown,
@@ -213,53 +236,101 @@ def apply_custom_css():
         color: white !important;
     }
     
-    /* Assistant messages - Left aligned */
+    /* Assistant messages - Left aligned with light gray bubble */
     .stChatMessage[data-testid="assistant-message"],
     .stChatMessage:has([data-testid*="assistant"]) {
-        background: rgba(102, 126, 234, 0.1) !important;
-        border: 1px solid rgba(102, 126, 234, 0.2) !important;
+        background: #E8EAED !important;
+        color: #202124 !important;
         margin-right: auto !important;
+        margin-left: 0 !important;
         border-bottom-left-radius: 4px !important;
+    }
+    
+    /* Speech bubble tail for assistant messages - points left toward avatar */
+    .stChatMessage[data-testid="assistant-message"]::before,
+    .stChatMessage:has([data-testid*="assistant"])::before {
+        content: "" !important;
+        position: absolute !important;
+        bottom: 8px !important;
+        left: -8px !important;
+        width: 0 !important;
+        height: 0 !important;
+        border-style: solid !important;
+        border-width: 8px 10px 8px 0 !important;
+        border-color: transparent #E8EAED transparent transparent !important;
+    }
+    
+    .stChatMessage[data-testid="assistant-message"] p,
+    .stChatMessage:has([data-testid*="assistant"]) p {
+        color: #202124 !important;
+        margin: 0 !important;
     }
     
     /* Timestamp styling */
     .stChatMessage .stCaption {
-        opacity: 0.7 !important;
-        font-size: 0.75rem !important;
-        margin-top: 0.5rem !important;
+        opacity: 0.65 !important;
+        font-size: 0.7rem !important;
+        margin-top: 0.375rem !important;
+        font-weight: 400 !important;
+    }
+    
+    /* Avatar positioning */
+    .stChatMessage .stAvatar {
+        width: 32px !important;
+        height: 32px !important;
+    }
+    
+    /* User message avatar on right */
+    .stChatMessage[data-testid="user-message"] .stAvatar,
+    .stChatMessage:has([data-testid*="user"]) .stAvatar {
+        order: 2 !important;
+        margin-left: 0.625rem !important;
+        margin-right: 0 !important;
+    }
+    
+    /* Assistant message avatar on left */
+    .stChatMessage[data-testid="assistant-message"] .stAvatar,
+    .stChatMessage:has([data-testid*="assistant"]) .stAvatar {
+        margin-right: 0.625rem !important;
+        margin-left: 0 !important;
     }
     
     /* Chat input styling */
     .stChatInput {
         border-radius: 24px !important;
+        background: white !important;
     }
     
     .stChatInput > div {
         border-radius: 24px !important;
-        border: 2px solid rgba(102, 126, 234, 0.3) !important;
-        transition: all 0.3s ease !important;
+        border: 1px solid #E0E0E0 !important;
+        background: white !important;
+        transition: all 0.2s ease !important;
     }
     
     .stChatInput > div:focus-within {
-        border-color: #667eea !important;
-        box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1) !important;
+        border-color: #4A9FF5 !important;
+        box-shadow: 0 0 0 2px rgba(74, 159, 245, 0.1) !important;
+    }
+    
+    .stChatInput input {
+        color: #202124 !important;
+    }
+    
+    .stChatInput input::placeholder {
+        color: #9AA0A6 !important;
     }
     
     /* Message slide-in animation */
     @keyframes slideIn {
         from {
             opacity: 0;
-            transform: translateY(10px);
+            transform: translateY(8px);
         }
         to {
             opacity: 1;
             transform: translateY(0);
         }
-    }
-    
-    /* Avatar styling */
-    .stChatMessage .stAvatar {
-        margin-right: 0.75rem !important;
     }
     
     /* Responsive design */
