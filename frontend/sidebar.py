@@ -80,7 +80,7 @@ def render_sidebar(api_client):
                     file_size_mb = uploaded_file.size / (1024 * 1024)
                     if file_size_mb > MAX_FILE_SIZE_MB:
                         ToastNotification.show(
-                            f"❌ {uploaded_file.name} exceeds {MAX_FILE_SIZE_MB}MB limit",
+                            f"{uploaded_file.name} exceeds {MAX_FILE_SIZE_MB}MB limit",
                             "error"
                         )
                         continue
@@ -91,14 +91,14 @@ def render_sidebar(api_client):
                         
                         if status_code == 200:
                             ToastNotification.show(
-                                f"✅ {uploaded_file.name} uploaded successfully",
+                                f"{uploaded_file.name} uploaded successfully",
                                 "success"
                             )
                             # Auto-select the newly uploaded document
                             st.session_state.selected_document = uploaded_file.name
                         else:
                             error_msg = response.get('message', 'Upload failed')
-                            ToastNotification.show(f"❌ {error_msg}", "error")
+                            ToastNotification.show(f"{error_msg}", "error")
                 
                 # Increment uploader key to reset the widget
                 st.session_state.uploader_key += 1

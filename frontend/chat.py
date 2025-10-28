@@ -43,39 +43,76 @@ def render_chat(api_client, health_data: Optional[Dict] = None):
     # Export dropdown in header
     chat_history = get_current_chat()
     if chat_history:
-        col1, col2, col3 = st.columns([3, 1, 1])
+
+        col1, col2, _ = st.columns([2, 1, 7])
+
+            
+        # Define your files
+        document_types = ["JSON","Markdown"]
+        # Pre-select the first option
+        default_selection = document_types[0]
+        with col1:
+          # Radio button with default selection
+         selected = st.radio("Export as", document_types, index=0, horizontal=True)
+
         with col2:
-            export_format = st.selectbox(
-                "Export",
-                options=["Export", "JSON", "Markdown"],
-                key="export_dropdown"
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            doc_name = st.session_state.selected_document.replace('.pdf', '')
+            if selected == "JSON":
+                content = export_to_json(chat_history, st.session_state.selected_document)
+                filename = f"{doc_name}_chat_{timestamp}.json"
+                mime_type = "application/json"
+            else:  # Markdown
+                content = export_to_markdown(chat_history, st.session_state.selected_document)
+                filename = f"{doc_name}_chat_{timestamp}.md"
+                mime_type = "text/markdown"
+            # Download button beside dropdown
+            st.download_button(
+                label="⬇️ Download",
+                data=content,
+                file_name=filename,
+                mime=mime_type,
+                key=f"auto_download_{timestamp}",
+                use_container_width=True,
+                type="secondary",
+                help=f"Download {selected}"
             )
+
+
+
+        # col1, col2, col3 = st.columns([3, 1, 1])
+        # with col2:
+        #     export_format = st.selectbox(
+        #         "Export",
+        #         options=["Export", "JSON", "Markdown"],
+        #         key="export_dropdown"
+        #     )
         
-        with col3:
-            if export_format != "Export":
-                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                doc_name = st.session_state.selected_document.replace('.pdf', '')
+        # with col3:
+        #     if export_format != "Export":
+        #         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        #         doc_name = st.session_state.selected_document.replace('.pdf', '')
                 
-                if export_format == "JSON":
-                    content = export_to_json(chat_history, st.session_state.selected_document)
-                    filename = f"{doc_name}_chat_{timestamp}.json"
-                    mime_type = "application/json"
-                else:  # Markdown
-                    content = export_to_markdown(chat_history, st.session_state.selected_document)
-                    filename = f"{doc_name}_chat_{timestamp}.md"
-                    mime_type = "text/markdown"
+        #         if export_format == "JSON":
+        #             content = export_to_json(chat_history, st.session_state.selected_document)
+        #             filename = f"{doc_name}_chat_{timestamp}.json"
+        #             mime_type = "application/json"
+        #         else:  # Markdown
+        #             content = export_to_markdown(chat_history, st.session_state.selected_document)
+        #             filename = f"{doc_name}_chat_{timestamp}.md"
+        #             mime_type = "text/markdown"
                 
-                # Download button beside dropdown
-                st.download_button(
-                    label="⬇️",
-                    data=content,
-                    file_name=filename,
-                    mime=mime_type,
-                    key=f"auto_download_{timestamp}",
-                    use_container_width=True,
-                    type="primary",
-                    help=f"Download {export_format}"
-                )
+        #         # Download button beside dropdown
+        #         st.download_button(
+        #             label="⬇️",
+        #             data=content,
+        #             file_name=filename,
+        #             mime=mime_type,
+        #             key=f"auto_download_{timestamp}",
+        #             use_container_width=True,
+        #             type="secondary",
+        #             help=f"Download {export_format}"
+        #         )
     
     # Display chat history
     chat_history = get_current_chat()
@@ -183,9 +220,7 @@ async def process_stream(api_client, prompt: str, thinking_placeholder, response
                 response_placeholder.markdown(response)
                 break
             
-            if data.get('type') == 'metadata':
-                thinking_placeholder.empty()
-            elif data.get('type') == 'content':
+            if data.get('type') == 'content':
                 thinking_placeholder.empty()
                 response += data.get('content', '')
                 response_placeholder.markdown(response + "▌")
