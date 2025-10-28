@@ -1,4 +1,4 @@
-"""Sidebar components - FIXED with file upload"""
+"""Sidebar components - FIXED with better column layout"""
 import streamlit as st
 from typing import List, Dict
 from toast import ToastNotification
@@ -10,7 +10,8 @@ def render_document_card(doc: Dict, api_client):
     doc_name = doc['filename']
     is_selected = st.session_state.selected_document == doc_name
     
-    col1, col2 = st.columns([6, 1])
+    # Better column ratio: more space for document name, fixed space for delete
+    col1, col2 = st.columns([8, 1])
     
     with col1:
         if st.button(
@@ -57,7 +58,7 @@ def render_sidebar(api_client):
         st.subheader("📤 Upload Documents")
         st.caption(f"🤖 Using model: **{FIXED_LLM_MODEL}**")
         
-        # FIXED: Added the actual file uploader
+        # File uploader
         uploaded_files = st.file_uploader(
             "Choose files",
             type=ALLOWED_EXTENSIONS,
