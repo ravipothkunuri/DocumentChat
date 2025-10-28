@@ -2,16 +2,14 @@
 from pathlib import Path
 from typing import List, Dict, Any
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_community.document_loaders import PyPDFLoader, TextLoader, Docx2txtLoader
+from langchain_community.document_loaders import PyMuPDFLoader
 from backend.config_manager import ConfigManager
 
 class DocumentProcessor:
     """Handle document loading and processing"""
     
     LOADERS = {
-        '.pdf': PyPDFLoader,
-        '.txt': TextLoader,
-        '.docx': Docx2txtLoader
+        '.pdf': PyMuPDFLoader
     }
     
     def __init__(self, config: ConfigManager):

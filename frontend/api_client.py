@@ -88,3 +88,7 @@ class APIClient:
             self.sync_client.close()
         except:
             pass
+
+
+# Alias for backward compatibility
+RAGAPIClient = APIClient

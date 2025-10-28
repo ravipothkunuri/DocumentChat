@@ -4,7 +4,6 @@ from pathlib import Path
 from typing import List, Dict, Any, Tuple, Optional
 from datetime import datetime
 import numpy as np
-from sklearn.metrics.pairwise import cosine_similarity
 
 logger = logging.getLogger(__name__)
 
@@ -73,9 +72,20 @@ class VectorStore:
                 f"got {len(query_embedding)}"
             )
         
-        # Convert query to numpy array and calculate similarity
+        # Convert query to numpy array and calculate cosine similarity
         query_array = np.array([query_embedding], dtype=np.float32)
-        similarities = cosine_similarity(query_array, self.embeddings)[0]
+        
+        # Normalize vectors for cosine similarity with zero-vector protection
+        query_norms = np.linalg.norm(query_array, axis=1, keepdims=True)
+        query_norms = np.where(query_norms == 0, 1, query_norms)  # Avoid division by zero
+        query_norm = query_array / query_norms
+        
+        embeddings_norms = np.linalg.norm(self.embeddings, axis=1, keepdims=True)
+        embeddings_norms = np.where(embeddings_norms == 0, 1, embeddings_norms)  # Avoid division by zero
+        embeddings_norm = self.embeddings / embeddings_norms
+        
+        # Compute cosine similarity via dot product of normalized vectors
+        similarities = np.dot(query_norm, embeddings_norm.T)[0]
         
         # Get top k indices
         top_k = min(k, len(self.documents))
