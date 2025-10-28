@@ -3,7 +3,7 @@ import streamlit as st
 import asyncio
 import random
 from datetime import datetime
-from typing import Dict
+from typing import Dict, Optional
 from session_state import get_current_chat, add_message
 from toast import ToastNotification
 
@@ -16,7 +16,7 @@ THINKING_MESSAGES = [
     "🧠 Understanding the context...",
 ]
 
-def render_chat(api_client, health_data: Dict):
+def render_chat(api_client, health_data: Optional[Dict] = None):
     """Render async chat interface"""
     
     if health_data and health_data.get('document_count', 0) == 0:
@@ -44,8 +44,21 @@ def render_chat(api_client, health_data: Dict):
     messages_to_display = chat_history[:-1] if st.session_state.is_generating else chat_history
     
     for msg in messages_to_display:
-        with st.chat_message(msg["role"]):
+        role = msg["role"]
+        avatar = "👤" if role == "user" else "🤖"
+        
+        with st.chat_message(role, avatar=avatar):
             st.markdown(msg["content"])
+            
+            timestamp = msg.get("timestamp", "")
+            if timestamp:
+                try:
+                    dt = datetime.fromisoformat(timestamp)
+                    time_str = dt.strftime("%I:%M %p")
+                    st.caption(f"🕐 {time_str}")
+                except:
+                    pass
+            
             if msg.get("stopped"):
                 st.caption("⚠️ Generation was stopped")
     
@@ -71,11 +84,20 @@ def render_chat(api_client, health_data: Dict):
         chat_history = get_current_chat()
         if chat_history and chat_history[-1]["role"] == "user":
             user_prompt = chat_history[-1]["content"]
+            last_msg = chat_history[-1]
             
-            with st.chat_message("user"):
+            with st.chat_message("user", avatar="👤"):
                 st.markdown(user_prompt)
+                timestamp = last_msg.get("timestamp", "")
+                if timestamp:
+                    try:
+                        dt = datetime.fromisoformat(timestamp)
+                        time_str = dt.strftime("%I:%M %p")
+                        st.caption(f"🕐 {time_str}")
+                    except:
+                        pass
             
-            with st.chat_message("assistant"):
+            with st.chat_message("assistant", avatar="🤖"):
                 thinking_placeholder = st.empty()
                 thinking_message = f"*{random.choice(THINKING_MESSAGES)}*"
                 thinking_placeholder.markdown(thinking_message)

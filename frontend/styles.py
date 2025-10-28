@@ -184,11 +184,82 @@ def apply_custom_css():
         transform: translateX(4px) !important;
     }
     
-    /* Chat message styling */
+    /* Chat message styling - Conversational bubbles */
     .stChatMessage {
-        border-radius: 12px !important;
-        padding: 1rem !important;
-        margin-bottom: 0.5rem !important;
+        border-radius: 16px !important;
+        padding: 1.25rem !important;
+        margin-bottom: 1rem !important;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08) !important;
+        animation: slideIn 0.3s ease-out !important;
+        max-width: 85% !important;
+    }
+    
+    /* User messages - Right aligned with distinct color */
+    .stChatMessage[data-testid="user-message"],
+    .stChatMessage:has([data-testid*="user"]) {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%) !important;
+        color: white !important;
+        margin-left: auto !important;
+        border-bottom-right-radius: 4px !important;
+    }
+    
+    .stChatMessage[data-testid="user-message"] p,
+    .stChatMessage:has([data-testid*="user"]) p {
+        color: white !important;
+    }
+    
+    .stChatMessage[data-testid="user-message"] .stMarkdown,
+    .stChatMessage:has([data-testid*="user"]) .stMarkdown {
+        color: white !important;
+    }
+    
+    /* Assistant messages - Left aligned */
+    .stChatMessage[data-testid="assistant-message"],
+    .stChatMessage:has([data-testid*="assistant"]) {
+        background: rgba(102, 126, 234, 0.1) !important;
+        border: 1px solid rgba(102, 126, 234, 0.2) !important;
+        margin-right: auto !important;
+        border-bottom-left-radius: 4px !important;
+    }
+    
+    /* Timestamp styling */
+    .stChatMessage .stCaption {
+        opacity: 0.7 !important;
+        font-size: 0.75rem !important;
+        margin-top: 0.5rem !important;
+    }
+    
+    /* Chat input styling */
+    .stChatInput {
+        border-radius: 24px !important;
+    }
+    
+    .stChatInput > div {
+        border-radius: 24px !important;
+        border: 2px solid rgba(102, 126, 234, 0.3) !important;
+        transition: all 0.3s ease !important;
+    }
+    
+    .stChatInput > div:focus-within {
+        border-color: #667eea !important;
+        box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1) !important;
+    }
+    
+    /* Message slide-in animation */
+    @keyframes slideIn {
+        from {
+            opacity: 0;
+            transform: translateY(10px);
+        }
+        to {
+            opacity: 1;
+            transform: translateY(0);
+        }
+    }
+    
+    /* Avatar styling */
+    .stChatMessage .stAvatar {
+        margin-right: 0.75rem !important;
     }
     
     /* Responsive design */
