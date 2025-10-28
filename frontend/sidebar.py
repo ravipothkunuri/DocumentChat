@@ -10,7 +10,7 @@ def render_document_card(doc: Dict, api_client):
     doc_name = doc['filename']
     is_selected = st.session_state.selected_document == doc_name
     
-    col1, col2 = st.columns([5, 1])
+    col1, col2 = st.columns([6, 1])
     
     with col1:
         if st.button(

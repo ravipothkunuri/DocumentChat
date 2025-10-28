@@ -29,7 +29,8 @@ def apply_custom_css():
         color: #ef4444 !important;
         font-weight: 600 !important;
         min-height: 38px !important;
-        width: 45px !important;
+        width: 100% !important;
+        max-width: 42px !important;
     }
     
     button[key*="delete_"]:hover {
