@@ -25,7 +25,7 @@ if not is_healthy:
     st.stop()
 
 ToastNotification.render_pending()
-st.markdown('<div class="main-header">📚 Chat With Documents using AI</div>', unsafe_allow_html=True)
+st.title("📚 Chat With Documents using AI")
 
 render_sidebar(api_client)
 render_chat(api_client, health_data)
