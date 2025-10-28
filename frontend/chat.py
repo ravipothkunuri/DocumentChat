@@ -43,34 +43,38 @@ def render_chat(api_client, health_data: Optional[Dict] = None):
     # Export dropdown in header
     chat_history = get_current_chat()
     if chat_history:
-        col1, col2 = st.columns([4, 1])
+        col1, col2, col3 = st.columns([3, 1, 1])
         with col2:
             export_format = st.selectbox(
                 "Export",
-                options=["Select format", "JSON", "Markdown"],
-                key="export_format",
-                label_visibility="collapsed"
+                options=["Export", "JSON", "Markdown"],
+                key="export_dropdown"
             )
-            
-            if export_format != "Select format":
+        
+        with col3:
+            if export_format != "Export":
                 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
                 doc_name = st.session_state.selected_document.replace('.pdf', '')
                 
                 if export_format == "JSON":
                     content = export_to_json(chat_history, st.session_state.selected_document)
                     filename = f"{doc_name}_chat_{timestamp}.json"
+                    mime_type = "application/json"
                 else:  # Markdown
                     content = export_to_markdown(chat_history, st.session_state.selected_document)
                     filename = f"{doc_name}_chat_{timestamp}.md"
+                    mime_type = "text/markdown"
                 
-                # Create download button
+                # Download button beside dropdown
                 st.download_button(
-                    label=f"⬇️ Download {export_format}",
+                    label="⬇️",
                     data=content,
                     file_name=filename,
-                    mime="application/json" if export_format == "JSON" else "text/markdown",
-                    key=f"download_{export_format}_{timestamp}",
-                    use_container_width=True
+                    mime=mime_type,
+                    key=f"auto_download_{timestamp}",
+                    use_container_width=True,
+                    type="primary",
+                    help=f"Download {export_format}"
                 )
     
     # Display chat history
