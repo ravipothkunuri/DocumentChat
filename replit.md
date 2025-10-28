@@ -7,6 +7,14 @@ A Retrieval-Augmented Generation (RAG) system built with LangChain, Ollama LLMs,
 
 ## Recent Changes (October 28, 2025)
 
+### New Features
+- **Chat Export Functionality**: Added ability to export conversations
+  - Export dropdown in chat header with JSON and Markdown format options
+  - Immediate download button appears beside format selector
+  - Filenames include document name and timestamp for easy organization
+  - JSON export includes metadata (document, timestamp, message count)
+  - Markdown export creates readable formatted conversation history
+
 ### CSS Cleanup & UI Optimization
 - **Minimized Custom CSS**: Removed 90% of custom styling in favor of Streamlit built-in components
   - Removed: Complex gradients, custom animations (pulse, bounce, slideIn)
@@ -49,10 +57,11 @@ A Retrieval-Augmented Generation (RAG) system built with LangChain, Ollama LLMs,
 - **Main file**: `frontend/app.py`
 - **Port**: 5000 (binds to 0.0.0.0 for Replit)
 - **Key Components**:
-  - `chat.py` - Chat interface
+  - `chat.py` - Chat interface with export functionality
   - `sidebar.py` - Document management UI
   - `api_client.py` - Backend API client with streaming
-  - `styles.py` - Custom CSS styling
+  - `styles.py` - Minimal custom CSS styling
+  - `export_utils.py` - Conversation export utilities (JSON/Markdown)
 
 ### Vector Store
 - **File**: `vector_store.py`
