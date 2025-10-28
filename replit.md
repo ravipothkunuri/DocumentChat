@@ -7,6 +7,16 @@ A Retrieval-Augmented Generation (RAG) system built with LangChain, Ollama LLMs,
 
 ## Recent Changes (October 28, 2025)
 
+### CSS Cleanup & UI Optimization
+- **Minimized Custom CSS**: Removed 90% of custom styling in favor of Streamlit built-in components
+  - Removed: Complex gradients, custom animations (pulse, bounce, slideIn)
+  - Removed: Elaborate chat bubble styling with speech bubble tails
+  - Removed: Sidebar sizing and transition animations
+  - Removed: Custom scrollbar styling and loading animations
+  - Kept: Essential chat alignment, delete button styling, stop button styling
+- **Header Simplification**: Replaced custom HTML header with native `st.title()`
+- **Delete Button Fix**: Adjusted column ratio from [5,1] to [6,1] for better alignment
+
 ### Dependency Optimizations
 - **Removed**: `unstructured` (large, unused dependency)
 - **Removed**: `scikit-learn` (replaced with numpy for cosine similarity)
