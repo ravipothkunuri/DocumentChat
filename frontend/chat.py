@@ -6,6 +6,7 @@ from datetime import datetime
 from typing import Dict, Optional
 from session_state import get_current_chat, add_message
 from toast import ToastNotification
+from export_utils import export_to_json, export_to_markdown
 
 THINKING_MESSAGES = [
     "🤔 Analyzing document...",
@@ -38,6 +39,39 @@ def render_chat(api_client, health_data: Optional[Dict] = None):
         ollama = health_data.get('ollama_status', {})
         if not ollama.get('available'):
             ToastNotification.show("Ollama unavailable", "warning")
+    
+    # Export dropdown in header
+    chat_history = get_current_chat()
+    if chat_history:
+        col1, col2 = st.columns([4, 1])
+        with col2:
+            export_format = st.selectbox(
+                "Export",
+                options=["Select format", "JSON", "Markdown"],
+                key="export_format",
+                label_visibility="collapsed"
+            )
+            
+            if export_format != "Select format":
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                doc_name = st.session_state.selected_document.replace('.pdf', '')
+                
+                if export_format == "JSON":
+                    content = export_to_json(chat_history, st.session_state.selected_document)
+                    filename = f"{doc_name}_chat_{timestamp}.json"
+                else:  # Markdown
+                    content = export_to_markdown(chat_history, st.session_state.selected_document)
+                    filename = f"{doc_name}_chat_{timestamp}.md"
+                
+                # Create download button
+                st.download_button(
+                    label=f"⬇️ Download {export_format}",
+                    data=content,
+                    file_name=filename,
+                    mime="application/json" if export_format == "JSON" else "text/markdown",
+                    key=f"download_{export_format}_{timestamp}",
+                    use_container_width=True
+                )
     
     # Display chat history
     chat_history = get_current_chat()
