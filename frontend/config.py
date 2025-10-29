@@ -7,6 +7,6 @@ ALLOWED_EXTENSIONS = ['pdf', 'txt', 'docx']
 SIDEBAR_WIDTH = 320
 DEFAULT_TOP_K = 4
 
-# Fixed model configuration
-FIXED_LLM_MODEL = "llama3.2"
+# Model configuration
+LLM_MODEL = "llama3.2"
 DEFAULT_EMBEDDING_MODEL = "nomic-embed-text"

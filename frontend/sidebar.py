@@ -2,7 +2,7 @@
 import streamlit as st
 from typing import List, Dict
 from utils import get_current_chat, clear_chat, ToastNotification
-from config import ALLOWED_EXTENSIONS, MAX_FILE_SIZE_MB, FIXED_LLM_MODEL
+from config import ALLOWED_EXTENSIONS, MAX_FILE_SIZE_MB, LLM_MODEL
 
 def render_document_card(doc: Dict, api_client):
     """Render document card with selection and delete"""
@@ -49,12 +49,11 @@ def render_sidebar(api_client):
         st.subheader("📖 Your Documents")
         for doc in documents:
             render_document_card(doc, api_client)
+            st.caption(f"🤖 Using model: **{LLM_MODEL}**")
         if not documents:
             st.info("💡 No documents yet. Upload below!")
-        
         st.markdown("---")
         st.subheader("📤 Upload Documents")
-        st.caption(f"🤖 Using model: **{FIXED_LLM_MODEL}**")
         
         # FIXED: Added the actual file uploader
         uploaded_files = st.file_uploader(
