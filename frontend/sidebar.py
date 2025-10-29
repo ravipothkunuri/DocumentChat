@@ -1,7 +1,7 @@
-"""Sidebar components - FIXED with file upload"""
+"""Sidebar components"""
 import streamlit as st
 from typing import List, Dict
-from utils import get_current_chat, clear_chat, ToastNotification
+from utils import get_current_chat, clear_chat, ToastNotification, delete_document_chat  # ← Added import
 from config import ALLOWED_EXTENSIONS, MAX_FILE_SIZE_MB, LLM_MODEL
 
 def render_document_card(doc: Dict, api_client):
@@ -26,9 +26,13 @@ def render_document_card(doc: Dict, api_client):
         if st.button("✕", key=f"delete_{doc_name}", help="Delete", disabled=st.session_state.is_generating):
             status_code, response = api_client.delete_document(doc_name)
             if status_code == 200:
-                st.session_state.document_chats.pop(doc_name, None)
+                # Clean up chat history (NOW PERSISTS!)
+                delete_document_chat(doc_name)  # ← Use the new function
+                
+                # Deselect if this was the selected document
                 if st.session_state.selected_document == doc_name:
                     st.session_state.selected_document = None
+                
                 ToastNotification.show(f"Deleted {doc_name}", "success")
                 st.rerun()
             else:
@@ -68,14 +72,12 @@ def render_sidebar(api_client):
         
         # Handle file uploads
         if uploaded_files:
-            # Check if these are new files (not already processed)
             current_file_names = [f.name for f in uploaded_files]
             
             if current_file_names != st.session_state.last_uploaded_files:
                 st.session_state.last_uploaded_files = current_file_names
                 
                 for uploaded_file in uploaded_files:
-                    # Check file size
                     file_size_mb = uploaded_file.size / (1024 * 1024)
                     if file_size_mb > MAX_FILE_SIZE_MB:
                         ToastNotification.show(
@@ -84,7 +86,6 @@ def render_sidebar(api_client):
                         )
                         continue
                     
-                    # Upload file
                     with st.spinner(f"Uploading {uploaded_file.name}..."):
                         status_code, response = api_client.upload_file(uploaded_file)
                         
@@ -93,17 +94,14 @@ def render_sidebar(api_client):
                                 f"{uploaded_file.name} uploaded successfully",
                                 "success"
                             )
-                            # Auto-select the newly uploaded document
                             st.session_state.selected_document = uploaded_file.name
                         else:
                             error_msg = response.get('message', 'Upload failed')
                             ToastNotification.show(f"{error_msg}", "error")
                 
-                # Increment uploader key to reset the widget
                 st.session_state.uploader_key += 1
                 st.rerun()
         
-        # Display file requirements
         with st.expander("ℹ️ Upload Requirements", expanded=False):
             st.caption(f"**Formats:** {', '.join(ALLOWED_EXTENSIONS).upper()}")
             st.caption(f"**Max size:** {MAX_FILE_SIZE_MB} MB per file")
