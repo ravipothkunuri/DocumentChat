@@ -1,224 +1,398 @@
-# LangChain Ollama RAG Assistant 📚
+# 📚 Chat With Documents using AI
 
-A production-ready Retrieval-Augmented Generation (RAG) system powered by LangChain, Ollama local LLMs, and Streamlit. Upload documents, generate embeddings using local Ollama models, and query your knowledge base with intelligent, context-aware responses.
+A powerful, async-capable RAG (Retrieval-Augmented Generation) application that lets you upload documents and have intelligent conversations with them using local AI models via Ollama.
 
-## Features
+## 🌟 Features
 
-- **LangChain Integration**: Built with LangChain framework for robust RAG pipeline
-- **Document Processing**: Upload PDF, TXT, and DOCX files using LangChain document loaders
-- **Local LLM Integration**: Uses Ollama models for embeddings and chat (no API keys required)
-- **Custom Vector Store**: In-memory vector database with JSON persistence and sklearn cosine similarity
-- **Streaming Responses**: Real-time LLM output display with LangChain streaming
-- **Background Processing**: Async document upload handling with FastAPI BackgroundTasks
-- **Responsive Design**: Mobile-friendly Streamlit UI with adaptive layout
-- **Production-Ready**: Complete RAG implementation with proper error handling and logging
+### Core Functionality
+- **📄 Multi-Format Support**: Upload PDF, TXT, and DOCX files
+- **💬 Per-Document Chat**: Separate conversation history for each document
+- **⚡ Real-Time Streaming**: See AI responses as they're generated
+- **🎯 Smart Retrieval**: Vector-based semantic search for relevant content
+- **🛑 Stop Generation**: Interrupt AI responses anytime
+- **📤 Export Conversations**: Save chats as JSON or Markdown
 
-## Architecture
+### Technical Highlights
+- **Async Architecture**: Non-blocking operations for smooth UX
+- **Persistent Storage**: Automatic saving of documents, embeddings, and metadata
+- **Intelligent Chunking**: Smart document splitting with overlap for context
+- **Vector Store**: Custom in-memory vector database with JSON persistence
+- **Lazy Loading**: Models initialized only when needed
+- **Health Monitoring**: Real-time system status and statistics
 
-### Backend (FastAPI)
-- **rag_backend.py**: Main API server with document processing and query endpoints
-- **vector_store.py**: Custom vector database implementation
-- Runs on: `http://localhost:8000`
+## 🏗️ Architecture
 
-### Frontend (Streamlit)
-- **app.py**: Interactive UI with document management and querying
-- Runs on: `http://localhost:5000`
+```
+┌─────────────────┐
+│   Streamlit UI  │  (Frontend)
+│  - Chat Interface
+│  - File Upload
+│  - Export Tools
+└────────┬────────┘
+         │
+         ▼
+┌─────────────────┐
+│   FastAPI API   │  (Backend)
+│  - Document Mgmt
+│  - Query Handler
+│  - Streaming
+└────────┬────────┘
+         │
+    ┌────┴────┬──────────┬──────────┐
+    ▼         ▼          ▼          ▼
+┌───────┐ ┌───────┐ ┌──────┐ ┌─────────┐
+│Vector │ │ Model │ │Config│ │Metadata │
+│ Store │ │Manager│ │ Mgr  │ │   Mgr   │
+└───────┘ └───────┘ └──────┘ └─────────┘
+    │         │
+    │         ▼
+    │    ┌────────┐
+    │    │ Ollama │
+    │    │  LLM   │
+    │    └────────┘
+    │
+    ▼
+┌─────────────┐
+│   Uploads   │
+│ + JSON Data │
+└─────────────┘
+```
 
-## Dependencies
-
-### Core Framework Dependencies
-- `fastapi>=0.119.0` - Modern web framework for building APIs
-- `uvicorn>=0.37.0` - ASGI server for FastAPI
-- `streamlit>=1.50.0` - Frontend UI framework
-
-### LangChain & LLM Dependencies
-- `langchain>=0.3.27` - Framework for LLM applications and RAG pipelines
-- `langchain-community>=0.3.31` - Community document loaders (PDF, TXT, DOCX)
-- `langchain-ollama>=0.3.10` - Ollama integration for embeddings and chat
-- `ollama>=0.6.0` - Python client for Ollama local LLMs
-
-### Data Processing & Machine Learning
-- `numpy>=2.3.4` - Numerical computing library
-- `scikit-learn>=1.7.2` - Machine learning library (used for cosine similarity)
-
-### Document Processing
-- `pypdf>=6.1.1` - PDF document parsing
-- `python-docx>=1.2.0` - DOCX document parsing
-- `docx2txt>=0.9` - Additional DOCX text extraction
-
-### API & Networking
-- `requests>=2.32.5` - HTTP library for API calls
-- `python-multipart>=0.0.20` - File upload handling
-
-### Data Validation
-- `pydantic>=2.12.2` - Data validation and settings management
-
-### Standard Library Modules (Built-in)
-These are included with Python and don't need installation:
-- `json` - JSON encoding/decoding
-- `os` - Operating system interfaces
-- `time` - Time access and conversions
-- `logging` - Logging facility
-- `datetime` - Date and time operations
-- `pathlib` - Object-oriented filesystem paths
-- `typing` - Type hints support
-- `traceback` - Exception stack trace utilities
-
-## Installation
+## 🚀 Quick Start
 
 ### Prerequisites
-1. **Python 3.11+** installed
-2. **Ollama** installed and running locally
+
+- **Python**: 3.9 or higher
+- **Ollama**: Installed and running locally
+- **Required Models**:
+  - `llama3.2` (LLM for responses)
+  - `nomic-embed-text` (for embeddings)
+
+### Installation
+
+1. **Install Ollama** (if not already installed):
    ```bash
-   # Install Ollama from https://ollama.ai
-   # Pull required models:
-   ollama pull nomic-embed-text  # Embedding model
-   ollama pull llama3            # Default LLM model
-   ollama pull mistral           # Alternative LLM
-   ollama pull phi               # Lightweight LLM
+   # Visit https://ollama.com for installation
+   curl -fsSL https://ollama.com/install.sh | sh
    ```
 
-### Install Dependencies
-All dependencies are managed in `pyproject.toml`. Install using:
+2. **Pull Required Models**:
+   ```bash
+   ollama pull llama3.2
+   ollama pull nomic-embed-text
+   ```
 
-```bash
-# Using pip
-pip install fastapi uvicorn streamlit langchain langchain-community langchain-ollama ollama numpy scikit-learn pypdf docx2txt requests python-multipart pydantic
+3. **Clone Repository**:
+   ```bash
+   git clone <your-repo-url>
+   cd <repo-directory>
+   ```
 
-# Or if you have uv or poetry, they'll read from pyproject.toml automatically
+4. **Install Python Dependencies**:
+   ```bash
+   pip install -r requirements.txt
+   ```
+
+### Running the Application
+
+1. **Start Backend (Terminal 1)**:
+   ```bash
+   python -m backend.main
+   ```
+   Backend will start on `http://localhost:8000`
+
+2. **Start Frontend (Terminal 2)**:
+   ```bash
+   streamlit run app.py
+   ```
+   Frontend will open at `http://localhost:8501`
+
+3. **Start Chatting**:
+   - Upload a document (PDF/TXT/DOCX)
+   - Select it from the sidebar
+   - Ask questions!
+
+## 📦 Dependencies
+
+### Backend
+```
+fastapi==0.104.1
+uvicorn==0.24.0
+langchain==0.1.0
+langchain-community==0.0.13
+langchain-ollama==0.0.1
+langchain-text-splitters==0.0.1
+httpx==0.25.2
+pymupdf==1.23.8
+docx2txt==0.8
+numpy==1.24.3
+pydantic==2.5.2
 ```
 
-## Running the Application
-
-### Start Backend Server
-```bash
-python -m uvicorn rag_backend:app --host 0.0.0.0 --port 8000
+### Frontend
+```
+streamlit==1.29.0
+httpx==0.25.2
 ```
 
-### Start Frontend UI
-```bash
-streamlit run app.py --server.port 5000
-```
-
-Access the application at: `http://localhost:5000`
-
-## Usage
-
-### 1. Dashboard
-- View system health status
-- Check available Ollama models
-- See document statistics
-
-### 2. Upload Documents
-- Upload PDF, TXT, or DOCX files
-- Documents are automatically processed and embedded
-- View and manage uploaded documents
-- Delete documents when no longer needed
-
-### 3. Configuration
-- Select LLM model (llama3, mistral, phi)
-- Select embedding model (nomic-embed-text, etc.)
-- Adjust response parameters:
-  - Top K: Number of relevant chunks to retrieve (1-20)
-  - Temperature: Response randomness (0.0-1.0)
-  - Max Tokens: Maximum response length
-
-### 4. Query Your Documents (via API)
-Query endpoint: `POST /query`
-```python
-import requests
-
-response = requests.post("http://localhost:8000/query", json={
-    "question": "What is the main topic of my documents?",
-    "top_k": 5,
-    "stream": True
-})
-```
-
-## API Endpoints
-
-### Health Check
-- `GET /health` - Check system status
-
-### Configuration
-- `GET /models` - List available Ollama models and current configuration
-- `POST /configure` - Update system configuration (LLM model, embedding model, temperature, etc.)
-
-### Documents
-- `GET /documents` - List uploaded documents
-- `POST /upload` - Upload document (supports PDF, TXT, DOCX)
-- `DELETE /documents/{filename}` - Delete specific document
-- `DELETE /clear` - Clear all documents
-
-### Query
-- `POST /query` - Query documents with streaming support
-
-## Configuration
-
-### Streamlit Configuration
-Located in `.streamlit/config.toml`:
-```toml
-[server]
-headless = true
-address = "0.0.0.0"
-port = 5000
-```
-
-### Vector Store
-- Embeddings stored in memory with JSON persistence
-- Storage file: `vector_store.json`
-- Automatic save on document changes
-
-## Mobile Support
-
-The application includes responsive CSS for:
-- Mobile devices (≤768px)
-- Tablets (769-1024px)
-- Touch-friendly interfaces (44px minimum tap targets)
-- Adaptive sidebar behavior
-- Full-width buttons and form elements on mobile
-
-## Project Structure
+## 🗂️ Project Structure
 
 ```
 .
-├── app.py                 # Streamlit frontend
-├── rag_backend.py         # FastAPI backend
-├── vector_store.py        # Custom vector database
-├── pyproject.toml         # Dependency management
-├── .streamlit/
-│   └── config.toml        # Streamlit configuration
-├── uploads/               # Uploaded documents (created at runtime)
-└── vector_store.json      # Vector embeddings (created at runtime)
+├── backend/
+│   ├── main.py              # FastAPI application entry
+│   ├── routes.py            # API endpoints (240 lines)
+│   ├── managers.py          # Config, Metadata, Model managers
+│   ├── ollama.py            # Async Ollama client
+│   ├── utils.py             # Document processing utilities
+│   ├── models.py            # Pydantic request/response models
+│   └── config.py            # Backend configuration
+│
+├── frontend/
+│   ├── app.py               # Streamlit main entry
+│   ├── chat.py              # Chat interface with streaming
+│   ├── sidebar.py           # Document management UI
+│   ├── api_client.py        # Async API client
+│   ├── utils.py             # Frontend helpers
+│   ├── styles.py            # Custom CSS
+│   └── config.py            # Frontend configuration
+│
+├── vector_store.py          # Custom vector database
+├── uploads/                 # Uploaded documents (auto-created)
+├── vector_data/             # Vector embeddings (auto-created)
+└── config/                  # App configuration (auto-created)
 ```
 
-## How It Works
+## 🎯 Key Components
 
-1. **Document Upload**: Files are uploaded and processed in the background
-2. **Text Chunking**: Documents are split into manageable chunks using RecursiveCharacterTextSplitter
-3. **Embedding Generation**: Each chunk is embedded using Ollama's embedding model
-4. **Vector Storage**: Embeddings are stored in the custom vector store with metadata
-5. **Query Processing**: User questions are embedded and matched against stored vectors using cosine similarity
-6. **Context Retrieval**: Top-K most relevant chunks are retrieved
-7. **LLM Response**: Retrieved context is sent to the LLM to generate an answer
-8. **Streaming Display**: Response is streamed in real-time to the UI
+### Backend
 
-## Troubleshooting
+#### **ConfigManager**
+- Saves/loads app settings automatically
+- Tracks query statistics
+- Persists configurations across restarts
 
-### Backend Won't Start
-- Ensure Ollama is running: `ollama serve`
-- Check if port 8000 is available
-- Verify Python 3.11+ is installed
+#### **MetadataManager**
+- Tracks all uploaded documents
+- Stores file info (size, chunks, timestamps)
+- JSON-based persistence
 
-### Models Not Found
-- Pull required models: `ollama pull nomic-embed-text`
-- Verify Ollama is accessible: `ollama list`
+#### **ModelManager**
+- Lazy loading of AI models (memory efficient)
+- Caches embeddings and LLM models
+- Proper cleanup on shutdown
 
-### Upload Failures
-- Check file format (PDF, TXT, DOCX only)
-- Ensure file size is reasonable
-- Check backend logs for errors
+#### **VectorStore**
+- Custom in-memory vector database
+- Cosine similarity search
+- JSON persistence for embeddings
 
-## License
+#### **AsyncOllamaLLM**
+- Async streaming responses
+- Connection pooling
+- Error handling and timeouts
 
-This project is provided as-is for educational and production use.
+### Frontend
+
+#### **Chat Interface**
+- Real-time streaming responses
+- Per-document conversation history
+- Stop generation capability
+- Export to JSON/Markdown
+
+#### **Document Management**
+- Multi-file upload support
+- Auto-selection of uploaded docs
+- Delete functionality
+- File size validation
+
+## 🔧 Configuration
+
+### Backend (`backend/config.py`)
+```python
+OLLAMA_BASE_URL = "http://localhost:11434"
+FIXED_MODEL = "llama3.2"
+DEFAULT_EMBEDDING_MODEL = "nomic-embed-text"
+MAX_FILE_SIZE_MB = 20
+ALLOWED_EXTENSIONS = {'.pdf', '.txt', '.docx'}
+```
+
+### Frontend (`config.py`)
+```python
+API_BASE_URL = "http://localhost:8000"
+MAX_FILE_SIZE_MB = 20
+ALLOWED_EXTENSIONS = ['pdf', 'txt', 'docx']
+```
+
+## 📊 API Endpoints
+
+### Health Check
+```http
+GET /health
+```
+Returns system status, document count, and Ollama availability.
+
+### Upload Document
+```http
+POST /upload
+Content-Type: multipart/form-data
+
+Response: {
+  "status": "success",
+  "filename": "document.pdf",
+  "chunks": 45,
+  "file_size": 524288,
+  "message": "Document processed into 45 chunks"
+}
+```
+
+### Query Documents
+```http
+POST /query
+Content-Type: application/json
+
+{
+  "question": "What is this about?",
+  "top_k": 4,
+  "temperature": 0.7,
+  "stream": true
+}
+```
+
+### List Documents
+```http
+GET /documents
+```
+
+### Delete Document
+```http
+DELETE /documents/{filename}
+```
+
+### Clear All
+```http
+DELETE /clear
+```
+
+### Statistics
+```http
+GET /stats
+```
+
+## 💡 Usage Tips
+
+### Document Chunking
+- **Chunk Size**: 1000 characters (configurable)
+- **Overlap**: 200 characters (maintains context)
+- **Strategy**: Recursive splitting (paragraphs → sentences → words)
+
+### Best Practices
+1. **Document Quality**: Clear, well-formatted documents work best
+2. **Question Clarity**: Be specific in your questions
+3. **Context**: The AI sees only the most relevant chunks (top 4 by default)
+4. **Model Selection**: llama3.2 balances speed and quality
+
+### Streaming Responses
+- Responses appear in real-time as the AI generates them
+- Click the ⏹️ button to stop generation anytime
+- Interrupted responses are marked in chat history
+
+## 🔒 Security Considerations
+
+- Files validated for type and size before processing
+- No authentication implemented (add if deploying publicly)
+- API runs on localhost by default
+- Consider adding rate limiting for production use
+
+## 🐛 Troubleshooting
+
+### Backend won't start
+```bash
+# Check if Ollama is running
+curl http://localhost:11434/api/tags
+
+# If not, start Ollama
+ollama serve
+```
+
+### Models not found
+```bash
+# Pull required models
+ollama pull llama3.2
+ollama pull nomic-embed-text
+
+# Verify models are available
+ollama list
+```
+
+### Upload fails
+- Check file size (max 20MB by default)
+- Verify file format (PDF/TXT/DOCX only)
+- Ensure `uploads/` directory is writable
+
+### Slow responses
+- First query initializes models (takes ~5-10 seconds)
+- Subsequent queries are much faster
+- Consider using a smaller model for speed
+- Check your system resources (Ollama needs RAM)
+
+## 🎨 Customization
+
+### Change AI Model
+Edit `backend/config.py`:
+```python
+FIXED_MODEL = "llama2"  # or any Ollama model
+```
+
+### Adjust Chunk Size
+Edit `backend/managers.py`:
+```python
+DEFAULT_CONFIG = {
+    'chunk_size': 1500,      # Increase for more context
+    'chunk_overlap': 300,    # Increase with chunk_size
+}
+```
+
+### Modify Temperature
+Edit query request:
+```python
+QueryRequest(
+    question="...",
+    temperature=0.3  # Lower = more focused, Higher = more creative
+)
+```
+
+## 📈 Performance
+
+- **Document Processing**: ~2-5 seconds per document
+- **Query Response**: ~1-3 seconds (streaming starts immediately)
+- **Memory Usage**: ~2GB RAM (includes Ollama models)
+- **Storage**: Embeddings are ~4KB per chunk
+
+## 🤝 Contributing
+
+Contributions welcome! Areas for improvement:
+- [ ] Add authentication/authorization
+- [ ] Support more file formats (Excel, PowerPoint)
+- [ ] Implement conversation memory
+- [ ] Add multiple model selection
+- [ ] Create Docker deployment
+- [ ] Add unit tests
+
+## 🙏 Acknowledgments
+
+- **Ollama**: Local LLM inference
+- **LangChain**: LLM framework
+- **Streamlit**: Frontend framework
+- **FastAPI**: Backend framework
+
+## 📧 Support
+
+For issues and questions:
+- Open an issue on GitHub
+- Check the troubleshooting section
+- Review Ollama documentation: https://ollama.com/docs
+
+---
+
+**Built with ❤️ using Ollama, FastAPI, and Streamlit**
