@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import List, Dict, Any
 from fastapi import HTTPException
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_community.document_loaders import PyMuPDFLoader
+from langchain_community.document_loaders import PyMuPDFLoader, TextLoader, Docx2txtLoader
 from backend.config import (
     OLLAMA_BASE_URL, ALLOWED_EXTENSIONS, 
     MAX_FILE_SIZE_BYTES, MAX_FILE_SIZE_MB
@@ -26,37 +26,6 @@ from backend.config import (
 # ============================================================================
 # UTILITY FUNCTIONS
 # ============================================================================
-
-def clean_llm_response(text: str) -> str:
-    """
-    Strip out the "thinking out loud" parts from AI responses.
-    
-    Some AI models like to show their reasoning process wrapped in tags like
-    <think> or <reasoning>. While that's interesting for debugging, users
-    don't need to see it. This function removes all that noise!
-    
-    Also cleans up excessive blank lines because nobody likes those.
-    
-    Example:
-        Before: "<think>Let me calculate...</think>The answer is 42\n\n\n"
-        After:  "The answer is 42"
-    """
-    # All the tag patterns we want to remove
-    patterns = [
-        r'<think>.*?</think>',         # <think> blocks
-        r'<reasoning>.*?</reasoning>',  # <reasoning> blocks
-        r'</?(?:think|reasoning)>'      # Any leftover tags
-    ]
-    
-    # Zap 'em all!
-    for pattern in patterns:
-        text = re.sub(pattern, '', text, flags=re.DOTALL | re.IGNORECASE)
-    
-    # Replace 3+ newlines with just 2 (keeps paragraphs readable)
-    text = re.sub(r'\n{3,}', '\n\n', text)
-    
-    return text.strip()
-
 
 def check_ollama_health() -> tuple[bool, str]:
     """
@@ -138,10 +107,9 @@ class DocumentProcessor:
     
     # Map file types to their loader classes
     LOADERS = {
-        '.pdf': PyMuPDFLoader
-        # Easy to add more later:
-        # '.txt': TextLoader,
-        # '.docx': Docx2txtLoader,
+        '.pdf': PyMuPDFLoader,
+        '.txt': TextLoader,
+        '.docx': Docx2txtLoader,
     }
     
     def __init__(self, config):

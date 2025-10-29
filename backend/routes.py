@@ -10,7 +10,7 @@ from fastapi.responses import StreamingResponse
 
 from backend.models import QueryRequest, DocumentUploadResponse, DocumentInfo
 from backend.config import UPLOAD_DIR, FIXED_MODEL
-from backend.backend_utils import check_ollama_health, validate_file, clean_llm_response, DocumentProcessor
+from backend.utils import check_ollama_health, validate_file, DocumentProcessor
 from backend.managers import ConfigManager, ModelManager, MetadataManager
 from vector_store import VectorStore
 
@@ -200,7 +200,6 @@ Your response:"""
         else:
             # Non-streaming response
             answer = await llm.ainvoke(prompt)
-            answer = clean_llm_response(answer)
             
             processing_time = (datetime.now() - start_time).total_seconds()
             config_manager.increment_queries()

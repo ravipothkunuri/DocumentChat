@@ -49,13 +49,14 @@ def render_sidebar(api_client):
         st.subheader("📖 Your Documents")
         for doc in documents:
             render_document_card(doc, api_client)
+        if documents:
             st.caption(f"🤖 Using model: **{LLM_MODEL}**")
-        if not documents:
+        else:
             st.info("💡 No documents yet. Upload below!")
+
         st.markdown("---")
         st.subheader("📤 Upload Documents")
         
-        # FIXED: Added the actual file uploader
         uploaded_files = st.file_uploader(
             "Choose files",
             type=ALLOWED_EXTENSIONS,
