@@ -13,7 +13,7 @@ import asyncio
 import random
 from datetime import datetime
 from typing import Dict, Optional
-from frontend_utils import get_current_chat, add_message, ToastNotification, export_to_json, export_to_markdown
+from utils import get_current_chat, add_message, ToastNotification, export_to_json, export_to_markdown
 
 THINKING_MESSAGES = [
     "🤔 Analyzing document...",
@@ -61,7 +61,7 @@ def render_chat(api_client, health_data: Optional[Dict] = None):
         
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         doc_name = st.session_state.selected_document.replace('.pdf', '').replace('.txt', '').replace('.docx', '')
-        
+        is_streaming = st.session_state.is_generating
         with col1:
             # JSON export button
             json_content = export_to_json(chat_history, st.session_state.selected_document)
@@ -74,6 +74,7 @@ def render_chat(api_client, health_data: Optional[Dict] = None):
                 mime="application/json",
                 use_container_width=True,
                 type="secondary",
+                disabled=is_streaming,
                 help=f"Download {len(chat_history)} messages as JSON ({json_size:.1f} KB)"
             )
         
@@ -89,6 +90,7 @@ def render_chat(api_client, health_data: Optional[Dict] = None):
                 mime="text/markdown",
                 use_container_width=True,
                 type="secondary",
+                disabled=is_streaming,
                 help=f"Download {len(chat_history)} messages as Markdown ({md_size:.1f} KB)"
             )
     

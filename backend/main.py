@@ -1,4 +1,4 @@
-"""Main FastAPI Application - 40 lines"""
+"""Main FastAPI Application Entry Point"""
 import logging
 from contextlib import asynccontextmanager
 

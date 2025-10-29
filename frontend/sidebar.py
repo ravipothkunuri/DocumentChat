@@ -1,8 +1,7 @@
 """Sidebar components - FIXED with file upload"""
 import streamlit as st
 from typing import List, Dict
-from toast import ToastNotification
-from session_state import get_current_chat, clear_chat
+from utils import get_current_chat, clear_chat, ToastNotification
 from config import ALLOWED_EXTENSIONS, MAX_FILE_SIZE_MB, FIXED_LLM_MODEL
 
 def render_document_card(doc: Dict, api_client):

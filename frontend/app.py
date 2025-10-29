@@ -1,11 +1,10 @@
-"""Main RAG Application Entry Point - 32 lines"""
+"""Main Application Entry Point"""
 import streamlit as st
 from styles import apply_custom_css
-from session_state import init_session_state
+from utils  import init_session_state, ToastNotification
 from sidebar import render_sidebar
 from chat import render_chat
-from api_client import RAGAPIClient
-from toast import ToastNotification
+from api_client import APIClient
 from config import API_BASE_URL
 
 st.set_page_config(
@@ -17,7 +16,7 @@ st.set_page_config(
 
 init_session_state()
 apply_custom_css()
-api_client = RAGAPIClient(API_BASE_URL)
+api_client = APIClient(API_BASE_URL)
 
 is_healthy, health_data = api_client.health_check()
 if not is_healthy:
@@ -25,7 +24,7 @@ if not is_healthy:
     st.stop()
 
 ToastNotification.render_pending()
-st.title("📚 Chat With Documents using AI")
+st.markdown('<div class="main-header">📚 Chat With Documents using AI</div>', unsafe_allow_html=True)
 
 render_sidebar(api_client)
 render_chat(api_client, health_data)

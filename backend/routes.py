@@ -10,11 +10,8 @@ from fastapi.responses import StreamingResponse
 
 from backend.models import QueryRequest, DocumentUploadResponse, DocumentInfo
 from backend.config import UPLOAD_DIR, FIXED_MODEL
-from backend.utils import check_ollama_health, validate_file, clean_llm_response
-from backend.config_manager import ConfigManager
-from backend.metadata_manager import MetadataManager
-from backend.model_manager import ModelManager
-from backend.document_processor import DocumentProcessor
+from backend.backend_utils import check_ollama_health, validate_file, clean_llm_response, DocumentProcessor
+from backend.managers import ConfigManager, ModelManager, MetadataManager
 from vector_store import VectorStore
 
 logger = logging.getLogger(__name__)
