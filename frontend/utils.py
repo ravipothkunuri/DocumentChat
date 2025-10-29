@@ -9,37 +9,85 @@ This is where we keep all the UI helper code:
 Basically everything that makes the Streamlit UI work smoothly!
 """
 
+"""
+Frontend Helper Functions - WITH CHAT PERSISTENCE
+
+Add this to your existing utils.py (frontend)
+"""
+
 import json
 import streamlit as st
 from datetime import datetime
+from pathlib import Path
 from typing import List, Dict
 
 
 # ============================================================================
-# SESSION STATE MANAGEMENT
+# CHAT PERSISTENCE
+# ============================================================================
+
+CHAT_HISTORY_FILE = Path("config/chat_history.json")
+
+def load_chat_history() -> Dict[str, List[Dict]]:
+    """
+    Load chat history from disk.
+    
+    Returns:
+        Dictionary mapping document names to their chat histories
+    """
+    try:
+        if CHAT_HISTORY_FILE.exists():
+            with open(CHAT_HISTORY_FILE, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+                print(f"✅ Loaded chat history: {len(data)} documents")
+                return data
+        else:
+            print("📝 No existing chat history found, starting fresh")
+            return {}
+    except Exception as e:
+        print(f"⚠️ Error loading chat history: {e}")
+        return {}
+
+
+def save_chat_history(chat_data: Dict[str, List[Dict]]):
+    """
+    Save chat history to disk.
+    
+    Args:
+        chat_data: Dictionary mapping document names to their chat histories
+    """
+    try:
+        # Ensure directory exists
+        CHAT_HISTORY_FILE.parent.mkdir(parents=True, exist_ok=True)
+        
+        with open(CHAT_HISTORY_FILE, 'w', encoding='utf-8') as f:
+            json.dump(chat_data, f, indent=2, ensure_ascii=False)
+        
+        print(f"💾 Saved chat history: {len(chat_data)} documents")
+    except Exception as e:
+        print(f"❌ Error saving chat history: {e}")
+
+
+# ============================================================================
+# SESSION STATE MANAGEMENT (UPDATED)
 # ============================================================================
 
 def init_session_state():
     """
     Set up all the variables our app needs to remember.
-    
-    Streamlit "forgets" everything on each interaction, so we use session_state
-    to keep track of important stuff like:
-    - Which document you're looking at
-    - Your chat history for each document
-    - Whether the AI is currently typing
-    - Notifications to show you
-    
-    Safe to call this multiple times - it only sets things up once!
+    NOW WITH PERSISTENT CHAT HISTORY!
     """
+    # Load chat history from disk FIRST
+    if 'document_chats' not in st.session_state:
+        st.session_state.document_chats = load_chat_history()
+    
     defaults = {
-        'document_chats': {},           # Separate chat for each document
-        'selected_document': None,       # Which doc you're currently viewing
-        'uploader_key': 0,              # Tricks Streamlit into resetting upload widget
-        'pending_toasts': [],           # Queue of notifications to show
-        'last_uploaded_files': [],      # Prevents duplicate upload processing
-        'is_generating': False,         # Is AI currently responding?
-        'stop_generation': False        # Did you hit the stop button?
+        'selected_document': None,
+        'uploader_key': 0,
+        'pending_toasts': [],
+        'last_uploaded_files': [],
+        'is_generating': False,
+        'stop_generation': False
     }
     
     for key, value in defaults.items():
@@ -50,20 +98,6 @@ def init_session_state():
 def get_current_chat() -> List[Dict]:
     """
     Get the chat history for whatever document you have open.
-    
-    Each message is a dict with:
-    - role: "user" or "assistant"
-    - content: the actual message text
-    - timestamp: when it was sent
-    - stopped: (optional) if you interrupted the AI
-    
-    Returns:
-        List of messages, or empty list if no document is selected
-    
-    Usage:
-        messages = get_current_chat()
-        for msg in messages:
-            print(f"{msg['role']}: {msg['content']}")
     """
     doc = st.session_state.selected_document
     
@@ -77,74 +111,46 @@ def get_current_chat() -> List[Dict]:
 def add_message(message: Dict):
     """
     Add a new message to the current chat.
-    
-    Make sure your message has at least 'role' and 'content' keys!
-    The timestamp is nice to include too.
-    
-    Example:
-        add_message({
-            "role": "user",
-            "content": "What's this document about?",
-            "timestamp": datetime.now().isoformat()
-        })
+    NOW AUTOMATICALLY SAVES TO DISK!
     """
     if doc := st.session_state.selected_document:
         st.session_state.document_chats.setdefault(doc, []).append(message)
+        # Auto-save after each message
+        save_chat_history(st.session_state.document_chats)
 
 
 def clear_chat():
     """
     Wipe out the chat history for the current document.
-    
-    This can't be undone, so make sure the user really wants to do it!
-    
-    Usage:
-        if st.button("Clear Chat", type="primary"):
-            clear_chat()
-            st.rerun()
+    NOW PERSISTS THE DELETION!
     """
     if doc := st.session_state.selected_document:
         st.session_state.document_chats[doc] = []
+        # Save the cleared state
+        save_chat_history(st.session_state.document_chats)
+
+
+def delete_document_chat(document_name: str):
+    """
+    Delete chat history when a document is deleted.
+    Call this from sidebar.py when deleting a document.
+    """
+    if document_name in st.session_state.document_chats:
+        del st.session_state.document_chats[document_name]
+        save_chat_history(st.session_state.document_chats)
+        print(f"🗑️ Deleted chat history for: {document_name}")
 
 
 # ============================================================================
-# TOAST NOTIFICATION SYSTEM
+# TOAST NOTIFICATION SYSTEM (unchanged)
 # ============================================================================
 
 class ToastNotification:
-    """
-    Simple notification system for the UI.
-    
-    Works like this:
-    1. During processing, queue up notifications with show()
-    2. At the start of your app, call render_pending() to display them
-    
-    Notifications auto-dismiss after a few seconds. Perfect for quick feedback
-    like "Upload successful!" or "Something went wrong :("
-    
-    Example:
-        # Somewhere in your code
-        ToastNotification.show("Saved successfully!", "success")
-        
-        # At the top of app.py
-        ToastNotification.render_pending()
-    """
+    """Simple notification system for the UI."""
     
     @staticmethod
     def show(message: str, toast_type: str = "info"):
-        """
-        Queue up a notification to show the user.
-        
-        Types:
-        - "success": Green checkmark (yay!)
-        - "error": Red X (oops!)
-        - "warning": Yellow warning triangle
-        - "info": Blue info icon (FYI)
-        
-        Example:
-            ToastNotification.show("Document uploaded!", "success")
-            ToastNotification.show("Oops, try again", "error")
-        """
+        """Queue up a notification to show the user."""
         if 'pending_toasts' not in st.session_state:
             st.session_state.pending_toasts = []
         
@@ -155,22 +161,10 @@ class ToastNotification:
     
     @staticmethod
     def render_pending():
-        """
-        Show all queued notifications.
-        
-        Call this once at the start of your app (after init_session_state).
-        It'll display everything in the queue, then clear it.
-        
-        Example:
-            # In app.py
-            init_session_state()
-            ToastNotification.render_pending()  # ← Do this!
-            st.title("My App")
-        """
+        """Show all queued notifications."""
         if 'pending_toasts' not in st.session_state or not st.session_state.pending_toasts:
             return
         
-        # Pick the right emoji for each type
         icon_map = {
             "success": "✅",
             "error": "❌",
@@ -178,42 +172,19 @@ class ToastNotification:
             "info": "ℹ️"
         }
         
-        # Show all the notifications
         for toast in st.session_state.pending_toasts:
             icon = icon_map.get(toast['type'], "ℹ️")
             st.toast(f"{toast['message']}", icon=icon)
         
-        # Clear the queue
         st.session_state.pending_toasts = []
 
 
 # ============================================================================
-# EXPORT UTILITIES
+# EXPORT UTILITIES (unchanged)
 # ============================================================================
 
 def export_to_json(messages: List[Dict], document_name: str) -> str:
-    """
-    Export your chat as a JSON file.
-    
-    Great for:
-    - Keeping a backup
-    - Processing with other tools
-    - Sharing with teammates
-    
-    The JSON includes metadata like when you exported it and how many
-    messages there are.
-    
-    Args:
-        messages: Your chat history
-        document_name: Which document this chat is about
-        
-    Returns:
-        A nice formatted JSON string
-    
-    Example:
-        json_str = export_to_json(get_current_chat(), "report.pdf")
-        # Now you can save it or download it!
-    """
+    """Export your chat as a JSON file."""
     export_data = {
         "document": document_name,
         "exported_at": datetime.now().isoformat(),
@@ -221,37 +192,11 @@ def export_to_json(messages: List[Dict], document_name: str) -> str:
         "conversation": messages
     }
     
-    # Pretty print with 2-space indents
     return json.dumps(export_data, indent=2, ensure_ascii=False)
 
 
 def export_to_markdown(messages: List[Dict], document_name: str) -> str:
-    """
-    Export your chat as a readable Markdown file.
-    
-    Perfect for:
-    - Creating documentation
-    - Sharing with non-technical folks
-    - Just reading through the conversation
-    
-    The markdown includes:
-    - A nice header with the document name
-    - Timestamp for each message
-    - Clear indication of who said what
-    - Notes about interrupted responses
-    
-    Args:
-        messages: Your chat history
-        document_name: Which document this chat is about
-        
-    Returns:
-        Markdown-formatted text
-    
-    Example:
-        md = export_to_markdown(get_current_chat(), "report.pdf")
-        with open("chat.md", "w") as f:
-            f.write(md)
-    """
+    """Export your chat as a readable Markdown file."""
     lines = [
         f"# Chat Conversation: {document_name}",
         f"\n**Exported:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
@@ -259,31 +204,26 @@ def export_to_markdown(messages: List[Dict], document_name: str) -> str:
         "\n---\n"
     ]
     
-    # Format each message nicely
     for i, msg in enumerate(messages, 1):
         role = msg.get("role", "unknown")
         content = msg.get("content", "")
         timestamp = msg.get("timestamp", "")
         stopped = msg.get("stopped", False)
         
-        # Add emoji and formatting based on who's talking
         role_display = "👤 **User**" if role == "user" else "🤖 **Assistant**"
         
         lines.append(f"\n## Message {i}: {role_display}\n")
         
-        # Add timestamp if we have one
         if timestamp:
             try:
                 dt = datetime.fromisoformat(timestamp)
                 time_str = dt.strftime("%I:%M %p")
                 lines.append(f"*Time: {time_str}*\n")
             except (ValueError, TypeError):
-                pass  # Skip bad timestamps
+                pass
         
-        # The actual message
         lines.append(f"\n{content}\n")
         
-        # Note if you stopped the AI mid-response
         if stopped:
             lines.append("\n*⚠️ You stopped this response*\n")
         
