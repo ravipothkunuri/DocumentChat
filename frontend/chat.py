@@ -1,12 +1,19 @@
-"""Async chat interface"""
+"""
+Async Chat Interface with Improved Export Component
+
+Key features:
+- Real-time streaming AI responses
+- Per-document chat history
+- Stop generation anytime
+- Compact export controls (no wasted space!)
+"""
+
 import streamlit as st
 import asyncio
 import random
 from datetime import datetime
 from typing import Dict, Optional
-from session_state import get_current_chat, add_message
-from toast import ToastNotification
-from export_utils import export_to_json, export_to_markdown
+from frontend_utils import get_current_chat, add_message, ToastNotification, export_to_json, export_to_markdown
 
 THINKING_MESSAGES = [
     "🤔 Analyzing document...",
@@ -18,8 +25,9 @@ THINKING_MESSAGES = [
 ]
 
 def render_chat(api_client, health_data: Optional[Dict] = None):
-    """Render async chat interface"""
+    """Render the chat interface with compact export controls."""
     
+    # Show welcome message if no documents
     if health_data and health_data.get('document_count', 0) == 0:
         st.info("👋 **Welcome!** Upload documents to start.")
         with st.expander("📖 Quick Start", expanded=True):
@@ -31,91 +39,64 @@ def render_chat(api_client, health_data: Optional[Dict] = None):
             """)
         return
     
+    # Warn if no document selected
     if not st.session_state.selected_document:
-        st.warning("📄 **Select a document** to start.")
+        st.warning("📄 **Select a document** to start chatting.")
         return
     
+    # Check Ollama availability
     if health_data:
         ollama = health_data.get('ollama_status', {})
         if not ollama.get('available'):
             ToastNotification.show("Ollama unavailable", "warning")
     
-    # Export dropdown in header
+    # ========================================================================
+    # EXPORT SECTION - COMPACT LAYOUT (NO WASTED SPACE!)
+    # ========================================================================
+    
     chat_history = get_current_chat()
     if chat_history:
-
-        col1, col2, _ = st.columns([2, 1, 7])
-
-            
-        # Define your files
-        document_types = ["JSON","Markdown"]
-        # Pre-select the first option
-        default_selection = document_types[0]
+        # Compact columns: two buttons on left, empty space on right
+        col1, col2, _ = st.columns([1.5, 1.5, 7])
+        
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        doc_name = st.session_state.selected_document.replace('.pdf', '').replace('.txt', '').replace('.docx', '')
+        
         with col1:
-          # Radio button with default selection
-         selected = st.radio("Export as", document_types, index=0, horizontal=True)
-
-        with col2:
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            doc_name = st.session_state.selected_document.replace('.pdf', '')
-            if selected == "JSON":
-                content = export_to_json(chat_history, st.session_state.selected_document)
-                filename = f"{doc_name}_chat_{timestamp}.json"
-                mime_type = "application/json"
-            else:  # Markdown
-                content = export_to_markdown(chat_history, st.session_state.selected_document)
-                filename = f"{doc_name}_chat_{timestamp}.md"
-                mime_type = "text/markdown"
-            # Download button beside dropdown
+            # JSON export button
+            json_content = export_to_json(chat_history, st.session_state.selected_document)
+            json_size = len(json_content.encode('utf-8')) / 1024  # Size in KB
+            
             st.download_button(
-                label="⬇️ Download",
-                data=content,
-                file_name=filename,
-                mime=mime_type,
-                key=f"auto_download_{timestamp}",
+                label="📄 Export JSON",
+                data=json_content,
+                file_name=f"{doc_name}_chat_{timestamp}.json",
+                mime="application/json",
                 use_container_width=True,
                 type="secondary",
-                help=f"Download {selected}"
+                help=f"Download {len(chat_history)} messages as JSON ({json_size:.1f} KB)"
             )
-
-
-
-        # col1, col2, col3 = st.columns([3, 1, 1])
-        # with col2:
-        #     export_format = st.selectbox(
-        #         "Export",
-        #         options=["Export", "JSON", "Markdown"],
-        #         key="export_dropdown"
-        #     )
         
-        # with col3:
-        #     if export_format != "Export":
-        #         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        #         doc_name = st.session_state.selected_document.replace('.pdf', '')
-                
-        #         if export_format == "JSON":
-        #             content = export_to_json(chat_history, st.session_state.selected_document)
-        #             filename = f"{doc_name}_chat_{timestamp}.json"
-        #             mime_type = "application/json"
-        #         else:  # Markdown
-        #             content = export_to_markdown(chat_history, st.session_state.selected_document)
-        #             filename = f"{doc_name}_chat_{timestamp}.md"
-        #             mime_type = "text/markdown"
-                
-        #         # Download button beside dropdown
-        #         st.download_button(
-        #             label="⬇️",
-        #             data=content,
-        #             file_name=filename,
-        #             mime=mime_type,
-        #             key=f"auto_download_{timestamp}",
-        #             use_container_width=True,
-        #             type="secondary",
-        #             help=f"Download {export_format}"
-        #         )
+        with col2:
+            # Markdown export button
+            md_content = export_to_markdown(chat_history, st.session_state.selected_document)
+            md_size = len(md_content.encode('utf-8')) / 1024  # Size in KB
+            
+            st.download_button(
+                label="📝 Export MD",
+                data=md_content,
+                file_name=f"{doc_name}_chat_{timestamp}.md",
+                mime="text/markdown",
+                use_container_width=True,
+                type="secondary",
+                help=f"Download {len(chat_history)} messages as Markdown ({md_size:.1f} KB)"
+            )
     
-    # Display chat history
-    chat_history = get_current_chat()
+    # ========================================================================
+    # DISPLAY CHAT HISTORY
+    # ========================================================================
+    
+    # Don't show the last message if we're currently generating
     messages_to_display = chat_history[:-1] if st.session_state.is_generating else chat_history
     
     for msg in messages_to_display:
@@ -125,6 +106,7 @@ def render_chat(api_client, health_data: Optional[Dict] = None):
         with st.chat_message(role, avatar=avatar):
             st.markdown(msg["content"])
             
+            # Show timestamp if available
             timestamp = msg.get("timestamp", "")
             if timestamp:
                 try:
@@ -134,16 +116,20 @@ def render_chat(api_client, health_data: Optional[Dict] = None):
                 except:
                     pass
             
+            # Show if generation was stopped
             if msg.get("stopped"):
                 st.caption("⚠️ Generation was stopped")
     
-    # Chat input
+    # ========================================================================
+    # CHAT INPUT
+    # ========================================================================
+    
     prompt = st.chat_input(
         f"💭 Ask about {st.session_state.selected_document}...",
         disabled=st.session_state.is_generating
     )
     
-    # Handle new prompt
+    # Handle new user message
     if prompt and not st.session_state.is_generating:
         add_message({
             "role": "user",
@@ -154,13 +140,19 @@ def render_chat(api_client, health_data: Optional[Dict] = None):
         st.session_state.stop_generation = False
         st.rerun()
     
-    # Process generation asynchronously
+    # ========================================================================
+    # GENERATE AI RESPONSE
+    # ========================================================================
+    
     if st.session_state.is_generating:
         chat_history = get_current_chat()
+        
+        # Make sure we have a user message to respond to
         if chat_history and chat_history[-1]["role"] == "user":
             user_prompt = chat_history[-1]["content"]
             last_msg = chat_history[-1]
             
+            # Display the user's message
             with st.chat_message("user", avatar="👤"):
                 st.markdown(user_prompt)
                 timestamp = last_msg.get("timestamp", "")
@@ -172,18 +164,21 @@ def render_chat(api_client, health_data: Optional[Dict] = None):
                     except:
                         pass
             
+            # Generate AI response
             with st.chat_message("assistant", avatar="🤖"):
+                # Thinking indicator
                 thinking_placeholder = st.empty()
                 thinking_message = f"*{random.choice(THINKING_MESSAGES)}*"
                 thinking_placeholder.markdown(thinking_message)
                 
+                # Create columns for response and stop button
                 col1, col2 = st.columns([6, 1])
                 
                 with col1:
                     response_placeholder = st.empty()
                 
                 with col2:
-                    if st.button("⏹️", key="stop_inline", help="Stop", use_container_width=True):
+                    if st.button("⏹️", key="stop_inline", help="Stop generation", use_container_width=True):
                         st.session_state.stop_generation = True
                         st.rerun()
                 
@@ -192,6 +187,7 @@ def render_chat(api_client, health_data: Optional[Dict] = None):
                     process_stream(api_client, user_prompt, thinking_placeholder, response_placeholder)
                 )
                 
+                # Save the assistant's response
                 add_message({
                     "role": "assistant",
                     "content": response or "*[No response generated]*",
@@ -202,17 +198,30 @@ def render_chat(api_client, health_data: Optional[Dict] = None):
                 if stopped:
                     ToastNotification.show("Generation stopped", "warning")
                 
+                # Reset generation state
                 st.session_state.is_generating = False
                 st.session_state.stop_generation = False
                 st.rerun()
 
+
 async def process_stream(api_client, prompt: str, thinking_placeholder, response_placeholder) -> tuple[str, bool]:
-    """Process async stream with cancellation support"""
+    """
+    Process the AI response stream asynchronously.
+    
+    Handles:
+    - Real-time token streaming
+    - User cancellation
+    - Error handling
+    
+    Returns:
+        (response_text, was_stopped)
+    """
     response = ""
     stopped = False
     
     try:
         async for data in api_client.query_stream(prompt):
+            # Check if user clicked stop
             if st.session_state.stop_generation:
                 stopped = True
                 thinking_placeholder.empty()
@@ -220,12 +229,15 @@ async def process_stream(api_client, prompt: str, thinking_placeholder, response
                 response_placeholder.markdown(response)
                 break
             
+            # Handle different message types
             if data.get('type') == 'content':
                 thinking_placeholder.empty()
                 response += data.get('content', '')
-                response_placeholder.markdown(response + "▌")
+                response_placeholder.markdown(response + "▌")  # Blinking cursor effect
+                
             elif data.get('type') == 'done':
                 response_placeholder.markdown(response)
+                
             elif data.get('type') == 'error':
                 thinking_placeholder.empty()
                 error = f"❌ Error: {data.get('message', 'Unknown error')}"
@@ -233,6 +245,7 @@ async def process_stream(api_client, prompt: str, thinking_placeholder, response
                 response = error
                 break
         
+        # Clean up thinking indicator
         thinking_placeholder.empty()
         if response:
             response_placeholder.markdown(response)
