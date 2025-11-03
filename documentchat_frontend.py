@@ -1,0 +1,852 @@
+"""
+DocumentChat Frontend - Interactive Streamlit Interface
+Conversational AI interface for uploading documents and chatting with their content
+"""
+import json
+import asyncio
+import random
+from datetime import datetime
+from typing import List, Dict, Optional, AsyncIterator, Tuple
+from abc import ABC, abstractmethod
+
+import httpx
+import streamlit as st
+
+# ============================================================================
+# CONFIGURATION
+# ============================================================================
+
+API_BASE_URL = "http://localhost:8000"
+MAX_FILE_SIZE_MB = 20
+ALLOWED_EXTENSIONS = ['pdf', 'txt', 'docx']
+LLM_MODEL = "llama3.2"
+
+THINKING_MESSAGES = [
+    "🤔 Analyzing document...",
+    "💭 Thinking...",
+    "📖 Reading through content...",
+    "🔍 Searching for answers...",
+    "⚡ Processing your question...",
+    "🧠 Understanding the context...",
+]
+
+# ============================================================================
+# API CLIENT
+# ============================================================================
+
+class APIClient:
+    """
+    Async HTTP client for backend API interactions.
+    Manages both sync and async requests for document and query operations.
+    """
+    
+    def __init__(self, base_url: str):
+        """
+        Initialize API client with backend URL.
+        
+        Args:
+            base_url: Base URL of the FastAPI backend
+        """
+        self.base_url = base_url
+        self.sync_client = httpx.Client(timeout=60.0)
+        self.async_client = httpx.AsyncClient(timeout=60.0)
+    
+    def _make_request(self, method: str, endpoint: str, timeout: int = 10, **kwargs) -> Tuple[int, Dict]:
+        """
+        Generic HTTP request handler with error handling.
+        
+        Args:
+            method: HTTP method (GET, POST, DELETE, etc.)
+            endpoint: API endpoint path
+            timeout: Request timeout in seconds
+            **kwargs: Additional arguments for httpx request
+            
+        Returns:
+            Tuple of (status_code, response_data)
+        """
+        try:
+            url = f"{self.base_url}{endpoint}"
+            response = self.sync_client.request(method, url, timeout=timeout, **kwargs)
+            data = response.json() if response.content else {}
+            return response.status_code, data
+        except json.JSONDecodeError:
+            return response.status_code, {"message": "Invalid JSON response"}
+        except httpx.RequestError as e:
+            return 500, {"message": f"Connection error: {str(e)}"}
+    
+    def health_check(self) -> Tuple[bool, Optional[Dict]]:
+        """
+        Check if backend service is healthy and available.
+        
+        Returns:
+            Tuple of (is_healthy, health_data)
+        """
+        try:
+            response = self.sync_client.get(f"{self.base_url}/health", timeout=5)
+            return response.status_code == 200, response.json() if response.is_success else None
+        except httpx.RequestError:
+            return False, None
+    
+    def get_documents(self) -> List[Dict]:
+        """
+        Fetch list of all uploaded documents.
+        
+        Returns:
+            List of document metadata dictionaries
+        """
+        status_code, data = self._make_request('GET', '/documents')
+        return data if status_code == 200 else []
+    
+    def upload_file(self, file) -> Tuple[int, Dict]:
+        """
+        Upload file to backend for processing.
+        
+        Args:
+            file: Streamlit UploadedFile object
+            
+        Returns:
+            Tuple of (status_code, response_data)
+        """
+        try:
+            files = {"file": (file.name, file, file.type)}
+            response = self.sync_client.post(
+                f"{self.base_url}/upload",
+                files=files,
+                timeout=60
+            )
+            return response.status_code, response.json() if response.content else {}
+        except Exception as e:
+            return 500, {"message": f"Upload failed: {str(e)}"}
+    
+    def delete_document(self, filename: str) -> Tuple[int, Dict]:
+        """
+        Delete document from backend.
+        
+        Args:
+            filename: Name of document to delete
+            
+        Returns:
+            Tuple of (status_code, response_data)
+        """
+        return self._make_request('DELETE', f'/documents/{filename}', timeout=30)
+    
+    async def query_stream(self, question: str, top_k: int = 4) -> AsyncIterator[Dict]:
+        """
+        Stream query response from backend.
+        
+        Args:
+            question: User's question
+            top_k: Number of document chunks to retrieve
+            
+        Yields:
+            Dictionary chunks with type and content
+        """
+        try:
+            payload = {
+                "question": question,
+                "stream": True,
+                "top_k": top_k,
+                "model": LLM_MODEL
+            }
+            
+            async with self.async_client.stream(
+                'POST',
+                f"{self.base_url}/query",
+                json=payload,
+                timeout=120.0
+            ) as response:
+                if response.status_code == 200:
+                    async for line in response.aiter_lines():
+                        if line and line.startswith('data: '):
+                            try:
+                                yield json.loads(line[6:])
+                            except json.JSONDecodeError:
+                                continue
+                else:
+                    yield {
+                        "type": "error",
+                        "message": f"Query failed with status {response.status_code}"
+                    }
+        except httpx.ReadTimeout:
+            yield {"type": "error", "message": "Request timed out"}
+        except Exception as e:
+            yield {"type": "error", "message": str(e)}
+    
+    def __del__(self):
+        """Clean up HTTP client connections."""
+        try:
+            self.sync_client.close()
+        except:
+            pass
+
+# ============================================================================
+# SESSION STATE MANAGEMENT
+# ============================================================================
+
+def init_session_state() -> None:
+    """
+    Initialize Streamlit session state with default values.
+    Creates necessary state variables for chat history and UI state.
+    """
+    defaults = {
+        'document_chats': {},
+        'selected_document': None,
+        'uploader_key': 0,
+        'pending_toasts': [],
+        'last_uploaded_files': [],
+        'is_generating': False,
+        'stop_generation': False
+    }
+    for key, value in defaults.items():
+        if key not in st.session_state:
+            st.session_state[key] = value
+
+def get_current_chat() -> List[Dict]:
+    """
+    Get chat history for currently selected document.
+    
+    Returns:
+        List of message dictionaries with role, content, and timestamp
+    """
+    doc = st.session_state.selected_document
+    if doc and doc not in st.session_state.document_chats:
+        st.session_state.document_chats[doc] = []
+    return st.session_state.document_chats.get(doc, [])
+
+def add_message(message: Dict) -> None:
+    """
+    Add message to current document's chat history.
+    
+    Args:
+        message: Dictionary with 'role', 'content', and optional 'timestamp'
+    """
+    if doc := st.session_state.selected_document:
+        st.session_state.document_chats.setdefault(doc, []).append(message)
+
+def clear_chat() -> None:
+    """Clear chat history for currently selected document."""
+    if doc := st.session_state.selected_document:
+        st.session_state.document_chats[doc] = []
+
+def get_ui_state() -> Dict[str, bool]:
+    """
+    Get current UI interaction state for disabling elements.
+    
+    Returns:
+        Dictionary with 'disabled' key based on generation state
+    """
+    return {"disabled": st.session_state.is_generating}
+
+# ============================================================================
+# NOTIFICATION SYSTEM
+# ============================================================================
+
+class ToastNotification:
+    """
+    Toast notification manager for user feedback.
+    Queues notifications and renders them on next rerun.
+    """
+    
+    ICONS = {
+        "success": "✅",
+        "error": "❌",
+        "warning": "⚠️",
+        "info": "ℹ️"
+    }
+    
+    @staticmethod
+    def show(message: str, toast_type: str = "info") -> None:
+        """
+        Queue a toast notification to be displayed.
+        
+        Args:
+            message: Notification message text
+            toast_type: Type of notification (success, error, warning, info)
+        """
+        if 'pending_toasts' not in st.session_state:
+            st.session_state.pending_toasts = []
+        st.session_state.pending_toasts.append({
+            'message': message,
+            'type': toast_type
+        })
+    
+    @staticmethod
+    def render_pending() -> None:
+        """Render all pending toast notifications and clear queue."""
+        if 'pending_toasts' not in st.session_state or not st.session_state.pending_toasts:
+            return
+        
+        for toast in st.session_state.pending_toasts:
+            icon = ToastNotification.ICONS.get(toast['type'], "ℹ️")
+            st.toast(f"{toast['message']}", icon=icon)
+        
+        st.session_state.pending_toasts = []
+
+# ============================================================================
+# EXPORT STRATEGIES
+# ============================================================================
+
+class ExportStrategy(ABC):
+    """Abstract base class for chat export formats."""
+    
+    @abstractmethod
+    def export(self, messages: List[Dict], document_name: str) -> str:
+        """
+        Export chat messages to specific format.
+        
+        Args:
+            messages: List of message dictionaries
+            document_name: Name of source document
+            
+        Returns:
+            Formatted export string
+        """
+        pass
+
+class JSONExporter(ExportStrategy):
+    """Export chat to JSON format."""
+    
+    def export(self, messages: List[Dict], document_name: str) -> str:
+        """
+        Export chat as structured JSON.
+        
+        Args:
+            messages: List of message dictionaries
+            document_name: Name of source document
+            
+        Returns:
+            JSON string with metadata and conversation
+        """
+        export_data = {
+            "document": document_name,
+            "exported_at": datetime.now().isoformat(),
+            "message_count": len(messages),
+            "conversation": messages
+        }
+        return json.dumps(export_data, indent=2, ensure_ascii=False)
+
+class MarkdownExporter(ExportStrategy):
+    """Export chat to Markdown format."""
+    
+    def export(self, messages: List[Dict], document_name: str) -> str:
+        """
+        Export chat as formatted Markdown document.
+        
+        Args:
+            messages: List of message dictionaries
+            document_name: Name of source document
+            
+        Returns:
+            Markdown formatted string with headers and message blocks
+        """
+        lines = [
+            f"# Chat Conversation: {document_name}",
+            f"\n**Exported:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+            f"\n**Messages:** {len(messages)}",
+            "\n---\n"
+        ]
+        
+        for i, msg in enumerate(messages, 1):
+            role = msg.get("role", "unknown")
+            content = msg.get("content", "")
+            timestamp = msg.get("timestamp", "")
+            stopped = msg.get("stopped", False)
+            
+            role_display = "👤 **User**" if role == "user" else "🤖 **Assistant**"
+            lines.append(f"\n## Message {i}: {role_display}\n")
+            
+            if timestamp:
+                try:
+                    dt = datetime.fromisoformat(timestamp)
+                    lines.append(f"*Time: {dt.strftime('%I:%M %p')}*\n")
+                except:
+                    pass
+            
+            lines.append(f"\n{content}\n")
+            if stopped:
+                lines.append("\n*⚠️ Generation was stopped by user*\n")
+            lines.append("\n---\n")
+        
+        return "".join(lines)
+
+# ============================================================================
+# UI STYLING
+# ============================================================================
+
+def apply_custom_css() -> None:
+    """
+    Apply custom CSS styling to Streamlit components.
+    Styles chat messages, buttons, and removes default Streamlit branding.
+    """
+    st.markdown("""
+    <style>
+    /* Chat message alignment */
+    .stChatMessage[data-testid="user-message"],
+    .stChatMessage:has([data-testid*="user"]) {
+        margin-left: auto !important;
+        margin-right: 0 !important;
+    }
+    
+    .stChatMessage[data-testid="assistant-message"],
+    .stChatMessage:has([data-testid*="assistant"]) {
+        margin-right: auto !important;
+        margin-left: 0 !important;
+    }
+    
+    /* Delete button styling */
+    button[key*="delete_"] {
+        background: rgba(239, 68, 68, 0.1) !important;
+        border: 1px solid rgba(239, 68, 68, 0.5) !important;
+        color: #ef4444 !important;
+        font-weight: 600 !important;
+        min-height: 38px !important;
+        width: 100% !important;
+        max-width: 42px !important;
+    }
+    
+    button[key*="delete_"]:hover {
+        background: rgba(239, 68, 68, 0.2) !important;
+        border-color: #ef4444 !important;
+    }
+    
+    /* Stop button styling */
+    button[key="stop_inline"] {
+        background: #ef4444 !important;
+        color: white !important;
+        border: none !important;
+        font-size: 1.3rem !important;
+        min-height: 40px !important;
+    }
+    
+    button[key="stop_inline"]:hover {
+        background: #dc2626 !important;
+    }
+    
+    /* Hide Streamlit branding */
+    #MainMenu {visibility: hidden;}
+    footer {visibility: hidden;}
+    </style>
+    """, unsafe_allow_html=True)
+
+# ============================================================================
+# UI COMPONENTS
+# ============================================================================
+
+def render_document_card(doc: Dict, api_client: APIClient) -> None:
+    """
+    Render single document card in sidebar with select and delete buttons.
+    
+    Args:
+        doc: Document metadata dictionary
+        api_client: API client instance for delete operations
+    """
+    doc_name = doc['filename']
+    is_selected = st.session_state.selected_document == doc_name
+    
+    col1, col2 = st.columns([6, 1])
+    
+    with col1:
+        if st.button(
+            f"{'📘' if is_selected else '📄'} **{doc_name}**",
+            key=f"select_{doc_name}",
+            use_container_width=True,
+            type="primary" if is_selected else "secondary",
+            **get_ui_state()
+        ):
+            st.session_state.selected_document = doc_name
+            st.rerun()
+    
+    with col2:
+        if st.button(
+            "✕",
+            key=f"delete_{doc_name}",
+            help="Delete document",
+            **get_ui_state()
+        ):
+            status_code, response = api_client.delete_document(doc_name)
+            if status_code == 200:
+                st.session_state.document_chats.pop(doc_name, None)
+                if st.session_state.selected_document == doc_name:
+                    st.session_state.selected_document = None
+                ToastNotification.show(f"Deleted {doc_name}", "success")
+                st.rerun()
+            else:
+                ToastNotification.show(
+                    response.get('message', 'Delete failed'),
+                    "error"
+                )
+    
+    if is_selected:
+        st.caption(
+            f"📊 {doc['chunks']} chunks • "
+            f"{doc['size']:,} bytes • "
+            f"{doc['type'].upper()}"
+        )
+        if msg_count := len(st.session_state.document_chats.get(doc_name, [])):
+            st.caption(f"💬 {msg_count} messages")
+
+def render_sidebar(api_client: APIClient) -> None:
+    """
+    Render sidebar with document management and upload interface.
+    
+    Args:
+        api_client: API client for document operations
+    """
+    with st.sidebar:
+        documents = api_client.get_documents()
+        
+        if documents:
+            st.info(f"📊 {len(documents)} document(s) loaded")
+        
+        st.subheader("📖 Your Documents")
+        
+        for doc in documents:
+            render_document_card(doc, api_client)
+        
+        if documents:
+            st.caption(f"🤖 Using model: **{LLM_MODEL}**")
+        else:
+            st.info("💡 No documents yet. Upload below!")
+        
+        st.markdown("---")
+        st.subheader("📤 Upload Documents")
+        
+        uploaded_files = st.file_uploader(
+            "Choose files",
+            type=ALLOWED_EXTENSIONS,
+            accept_multiple_files=True,
+            key=f"uploader_{st.session_state.uploader_key}",
+            label_visibility="collapsed",
+            **get_ui_state()
+        )
+        
+        if uploaded_files:
+            current_file_names = [f.name for f in uploaded_files]
+            
+            if current_file_names != st.session_state.last_uploaded_files:
+                st.session_state.last_uploaded_files = current_file_names
+                
+                for uploaded_file in uploaded_files:
+                    file_size_mb = uploaded_file.size / (1024 * 1024)
+                    
+                    if file_size_mb > MAX_FILE_SIZE_MB:
+                        ToastNotification.show(
+                            f"{uploaded_file.name} exceeds {MAX_FILE_SIZE_MB}MB limit",
+                            "error"
+                        )
+                        continue
+                    
+                    with st.spinner(f"Uploading {uploaded_file.name}..."):
+                        status_code, response = api_client.upload_file(uploaded_file)
+                        
+                        if status_code == 200:
+                            ToastNotification.show(
+                                f"{uploaded_file.name} uploaded successfully",
+                                "success"
+                            )
+                            st.session_state.selected_document = uploaded_file.name
+                        else:
+                            ToastNotification.show(
+                                f"{response.get('message', 'Upload failed')}",
+                                "error"
+                            )
+                
+                st.session_state.uploader_key += 1
+                st.rerun()
+        
+        with st.expander("ℹ️ Upload Requirements", expanded=False):
+            st.caption(f"**Formats:** {', '.join(ALLOWED_EXTENSIONS).upper()}")
+            st.caption(f"**Max size:** {MAX_FILE_SIZE_MB} MB per file")
+            st.caption(f"**Multiple files:** Supported")
+        
+        if st.session_state.selected_document and get_current_chat():
+            st.markdown("---")
+            if st.button(
+                "💬 Clear Chat",
+                use_container_width=True,
+                **get_ui_state()
+            ):
+                clear_chat()
+                st.rerun()
+
+async def process_stream(
+    api_client: APIClient,
+    prompt: str,
+    thinking_placeholder,
+    response_placeholder
+) -> Tuple[str, bool]:
+    """
+    Process streaming AI response with stop capability.
+    
+    Args:
+        api_client: API client for streaming queries
+        prompt: User's question
+        thinking_placeholder: Streamlit placeholder for loading indicator
+        response_placeholder: Streamlit placeholder for response text
+        
+    Returns:
+        Tuple of (complete_response, was_stopped)
+    """
+    response = ""
+    stopped = False
+    
+    try:
+        async for data in api_client.query_stream(prompt):
+            if st.session_state.stop_generation:
+                stopped = True
+                thinking_placeholder.empty()
+                response += "\n\n*[Interrupted by user]*" if response else "*[Interrupted]*"
+                response_placeholder.markdown(response)
+                break
+            
+            if data.get('type') == 'content':
+                thinking_placeholder.empty()
+                response += data.get('content', '')
+                response_placeholder.markdown(response + "▌")
+            
+            elif data.get('type') == 'done':
+                response_placeholder.markdown(response)
+            
+            elif data.get('type') == 'error':
+                thinking_placeholder.empty()
+                error = f"❌ Error: {data.get('message', 'Unknown error')}"
+                response_placeholder.error(error)
+                response = error
+                break
+        
+        thinking_placeholder.empty()
+        if response:
+            response_placeholder.markdown(response)
+    
+    except Exception as e:
+        thinking_placeholder.empty()
+        error = f"❌ Error: {str(e)}"
+        response_placeholder.error(error)
+        response = error
+        ToastNotification.show(f"Error: {str(e)}", "error")
+    
+    return response, stopped
+
+def render_export_buttons(chat_history: List[Dict], doc_name: str) -> None:
+    """
+    Render export buttons for chat history.
+    
+    Args:
+        chat_history: List of chat messages
+        doc_name: Document name for filename generation
+    """
+    col1, col2, _ = st.columns([1.5, 1.5, 7])
+    
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    clean_doc_name = doc_name.replace('.pdf', '').replace('.txt', '').replace('.docx', '')
+    is_streaming = st.session_state.is_generating
+    
+    json_exporter = JSONExporter()
+    md_exporter = MarkdownExporter()
+    
+    with col1:
+        json_content = json_exporter.export(chat_history, st.session_state.selected_document)
+        json_size = len(json_content.encode('utf-8')) / 1024
+        
+        st.download_button(
+            label="📄 Export JSON",
+            data=json_content,
+            file_name=f"{clean_doc_name}_chat_{timestamp}.json",
+            mime="application/json",
+            use_container_width=True,
+            type="secondary",
+            disabled=is_streaming,
+            help=f"Download {len(chat_history)} messages as JSON ({json_size:.1f} KB)"
+        )
+    
+    with col2:
+        md_content = md_exporter.export(chat_history, st.session_state.selected_document)
+        md_size = len(md_content.encode('utf-8')) / 1024
+        
+        st.download_button(
+            label="📝 Export MD",
+            data=md_content,
+            file_name=f"{clean_doc_name}_chat_{timestamp}.md",
+            mime="text/markdown",
+            use_container_width=True,
+            type="secondary",
+            disabled=is_streaming,
+            help=f"Download {len(chat_history)} messages as Markdown ({md_size:.1f} KB)"
+        )
+
+def render_chat_history(messages: List[Dict]) -> None:
+    """
+    Render chat message history with timestamps and status indicators.
+    
+    Args:
+        messages: List of message dictionaries to display
+    """
+    for msg in messages:
+        role = msg["role"]
+        avatar = "👤" if role == "user" else "🤖"
+        
+        with st.chat_message(role, avatar=avatar):
+            st.markdown(msg["content"])
+            
+            if timestamp := msg.get("timestamp", ""):
+                try:
+                    dt = datetime.fromisoformat(timestamp)
+                    st.caption(f"🕒 {dt.strftime('%I:%M %p')}")
+                except:
+                    pass
+            
+            if msg.get("stopped"):
+                st.caption("⚠️ Generation was stopped")
+
+def render_chat(api_client: APIClient, health_data: Optional[Dict] = None) -> None:
+    """
+    Render main chat interface with history and input.
+    
+    Args:
+        api_client: API client for query operations
+        health_data: Optional health check data for status display
+    """
+    if health_data and health_data.get('document_count', 0) == 0:
+        st.info("👋 **Welcome!** Upload documents to start chatting.")
+        with st.expander("📖 Quick Start Guide", expanded=True):
+            st.markdown("""
+            1. **Upload** 📤 - Add PDF, TXT, or DOCX files using the sidebar
+            2. **Select** 💬 - Click on any uploaded document to open it
+            3. **Ask** 💭 - Type your questions in the chat input
+            4. **Get Answers** 🎯 - Receive AI-powered responses based on your documents
+            """)
+        return
+    
+    if not st.session_state.selected_document:
+        st.warning("📄 **Select a document** from the sidebar to start chatting.")
+        return
+    
+    if health_data:
+        ollama = health_data.get('ollama_status', {})
+        if not ollama.get('available'):
+            ToastNotification.show("Ollama service unavailable", "warning")
+    
+    chat_history = get_current_chat()
+    
+    # Export buttons
+    if chat_history:
+        render_export_buttons(chat_history, st.session_state.selected_document)
+    
+    # Display chat history (exclude last message if generating)
+    messages_to_display = (
+        chat_history[:-1] if st.session_state.is_generating else chat_history
+    )
+    render_chat_history(messages_to_display)
+    
+    # Chat input
+    prompt = st.chat_input(
+        f"💭 Ask about {st.session_state.selected_document}...",
+        **get_ui_state()
+    )
+    
+    if prompt and not st.session_state.is_generating:
+        add_message({
+            "role": "user",
+            "content": prompt,
+            "timestamp": datetime.now().isoformat()
+        })
+        st.session_state.is_generating = True
+        st.session_state.stop_generation = False
+        st.rerun()
+    
+    # Generate AI response
+    if st.session_state.is_generating:
+        chat_history = get_current_chat()
+        
+        if chat_history and chat_history[-1]["role"] == "user":
+            user_prompt = chat_history[-1]["content"]
+            last_msg = chat_history[-1]
+            
+            with st.chat_message("user", avatar="👤"):
+                st.markdown(user_prompt)
+                if timestamp := last_msg.get("timestamp", ""):
+                    try:
+                        dt = datetime.fromisoformat(timestamp)
+                        st.caption(f"🕒 {dt.strftime('%I:%M %p')}")
+                    except:
+                        pass
+            
+            with st.chat_message("assistant", avatar="🤖"):
+                thinking_placeholder = st.empty()
+                thinking_message = f"*{random.choice(THINKING_MESSAGES)}*"
+                thinking_placeholder.markdown(thinking_message)
+                
+                col1, col2 = st.columns([6, 1])
+                
+                with col1:
+                    response_placeholder = st.empty()
+                
+                with col2:
+                    if st.button(
+                        "⏹️",
+                        key="stop_inline",
+                        help="Stop generation",
+                        use_container_width=True
+                    ):
+                        st.session_state.stop_generation = True
+                        st.rerun()
+                
+                response, stopped = asyncio.run(
+                    process_stream(
+                        api_client,
+                        user_prompt,
+                        thinking_placeholder,
+                        response_placeholder
+                    )
+                )
+                
+                add_message({
+                    "role": "assistant",
+                    "content": response or "*[No response generated]*",
+                    "timestamp": datetime.now().isoformat(),
+                    "stopped": stopped
+                })
+                
+                if stopped:
+                    ToastNotification.show("Generation stopped by user", "warning")
+                
+                st.session_state.is_generating = False
+                st.session_state.stop_generation = False
+                st.rerun()
+
+# ============================================================================
+# MAIN APPLICATION
+# ============================================================================
+
+def main():
+    """
+    Main application entry point.
+    Initializes session state, checks backend health, and renders UI.
+    """
+    st.set_page_config(
+        page_title="Chat With Documents using AI",
+        page_icon="📚",
+        layout="wide",
+        initial_sidebar_state="auto"
+    )
+    
+    init_session_state()
+    apply_custom_css()
+    api_client = APIClient(API_BASE_URL)
+    
+    is_healthy, health_data = api_client.health_check()
+    if not is_healthy:
+        st.error("❌ Backend service unavailable. Please start the FastAPI server.")
+        st.stop()
+    
+    ToastNotification.render_pending()
+    st.markdown(
+        '<div class="main-header"><h1>📚 <b>Chat With Documents using AI</b></h1></div>',
+        unsafe_allow_html=True
+    )
+    
+    render_sidebar(api_client)
+    render_chat(api_client, health_data)
+
+if __name__ == "__main__":
+    main()
