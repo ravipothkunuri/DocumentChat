@@ -80,13 +80,45 @@ class APIClient:
         except:
             pass
 
+# Persistence Functions
+def save_chat_history_to_local(doc_name: str, data: List[Dict]):
+    """Save chat history using JSON export format"""
+    try:
+        json_str = json.dumps(data)
+        if len(json_str) > 3800:
+            json_str = json_str[:3800]
+        st.experimental_set_query_params(chat=json_str, doc=doc_name)
+    except Exception:
+        pass
+
+def load_chat_history_from_local() -> Tuple[Optional[str], Optional[List[Dict]]]:
+    """Load chat history from query params"""
+    try:
+        params = st.experimental_get_query_params()
+        doc_name = params.get("doc", [None])[0]
+        chat_json = params.get("chat", [None])[0]
+        if doc_name and chat_json:
+            return doc_name, json.loads(chat_json)
+    except Exception:
+        pass
+    return None, None
+
 # Session State
 def init_session_state() -> None:
     defaults = {'document_chats': {}, 'selected_document': None, 'uploader_key': 0,
-                'pending_toasts': [], 'last_uploaded_files': [], 'is_generating': False, 'stop_generation': False}
+                'pending_toasts': [], 'last_uploaded_files': [], 'is_generating': False, 'stop_generation': False,
+                'persistence_loaded': False}
     for key, value in defaults.items():
         if key not in st.session_state:
             st.session_state[key] = value
+
+    # Load persisted chat once on first run
+    if not st.session_state.persistence_loaded:
+        doc_name, chat_data = load_chat_history_from_local()
+        if doc_name and chat_data:
+            st.session_state.document_chats[doc_name] = chat_data
+            st.session_state.selected_document = doc_name
+        st.session_state.persistence_loaded = True
 
 def get_current_chat() -> List[Dict]:
     doc = st.session_state.selected_document
@@ -97,10 +129,12 @@ def get_current_chat() -> List[Dict]:
 def add_message(message: Dict) -> None:
     if doc := st.session_state.selected_document:
         st.session_state.document_chats.setdefault(doc, []).append(message)
+        save_chat_history_to_local(doc, st.session_state.document_chats[doc])
 
 def clear_chat() -> None:
     if doc := st.session_state.selected_document:
         st.session_state.document_chats[doc] = []
+        save_chat_history_to_local(doc, [])
 
 def get_ui_state() -> Dict[str, bool]:
     return {"disabled": st.session_state.is_generating}
@@ -192,6 +226,8 @@ def render_document_card(doc: Dict, api_client: APIClient) -> None:
         if st.button(f"{'📘' if is_selected else '📄'} **{doc_name}**", key=f"select_{doc_name}",
                      use_container_width=True, type="primary" if is_selected else "secondary", **get_ui_state()):
             st.session_state.selected_document = doc_name
+            if doc_name in st.session_state.document_chats:
+                save_chat_history_to_local(doc_name, st.session_state.document_chats[doc_name])
             st.rerun()
 
     with col2:
@@ -201,6 +237,7 @@ def render_document_card(doc: Dict, api_client: APIClient) -> None:
                 st.session_state.document_chats.pop(doc_name, None)
                 if st.session_state.selected_document == doc_name:
                     st.session_state.selected_document = None
+                    st.experimental_set_query_params()
                 ToastNotification.show(f"Deleted {doc_name}", "success")
                 st.rerun()
             else:
