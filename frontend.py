@@ -7,14 +7,7 @@ from typing import List, Dict, Optional, AsyncIterator, Tuple
 from abc import ABC, abstractmethod
 import httpx
 import streamlit as st
-
-# Configuration
-API_BASE_URL = "http://localhost:8000"
-MAX_FILE_SIZE_MB = 20
-ALLOWED_EXTENSIONS = ['pdf', 'txt', 'docx']
-LLM_MODEL = "llama3.2"
-THINKING_MESSAGES = ["🤔 Analyzing document...", "💭 Thinking...", "📖 Reading through content...", 
-                     "🔍 Searching for answers...", "⚡ Processing your question...", "🧠 Understanding the context..."]
+from configuration import API_BASE_URL, MAX_FILE_SIZE_MB, ALLOWED_EXTENSIONS, LLM_MODEL, THINKING_MESSAGES
 
 # API Client
 class APIClient:
@@ -80,35 +73,28 @@ class APIClient:
         except:
             pass
 
-# Persistence Functions (Updated to use modern st.query_params API)
+# Persistence Functions
 def save_chat_history_to_local(doc_name: str, data: List[Dict]):
-    """Save chat history using JSON export format with modern API"""
+    """Save chat history using JSON export format"""
     try:
         json_str = json.dumps(data)
         if len(json_str) > 3800:
             json_str = json_str[:3800]
-        st.query_params.chat = json_str
-        st.query_params.doc = doc_name
+        st.query_params(chat=json_str, doc=doc_name)
     except Exception:
         pass
 
 def load_chat_history_from_local() -> Tuple[Optional[str], Optional[List[Dict]]]:
-    """Load chat history from query params with modern API"""
+    """Load chat history from query params"""
     try:
-        doc_name = st.query_params.get("doc")
-        chat_json = st.query_params.get("chat")
+        params = st.query_params()
+        doc_name = params.get("doc", [None])[0]
+        chat_json = params.get("chat", [None])[0]
         if doc_name and chat_json:
             return doc_name, json.loads(chat_json)
     except Exception:
         pass
     return None, None
-
-def clear_query_params():
-    """Clear all query params"""
-    try:
-        st.query_params.clear()
-    except Exception:
-        pass
 
 # Session State
 def init_session_state() -> None:
@@ -244,7 +230,7 @@ def render_document_card(doc: Dict, api_client: APIClient) -> None:
                 st.session_state.document_chats.pop(doc_name, None)
                 if st.session_state.selected_document == doc_name:
                     st.session_state.selected_document = None
-                    clear_query_params()
+                    st.query_params()
                 ToastNotification.show(f"Deleted {doc_name}", "success")
                 st.rerun()
             else:
@@ -445,7 +431,7 @@ def render_chat(api_client: APIClient, health_data: Optional[Dict] = None) -> No
                 with col1:
                     response_placeholder = st.empty()
                 with col2:
-                    if st.button("⏹️", key="stop_inline", help="Stop generation", use_container_width=True):
+                    if st.button("⏹️", key="stop_inline", help="Stop generation", use_container_width=False):
                         st.session_state.stop_generation = True
                         st.rerun()
 
