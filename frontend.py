@@ -3,11 +3,15 @@ import json
 import asyncio
 import random
 from datetime import datetime
+from pathlib import Path
 from typing import List, Dict, Optional, AsyncIterator, Tuple
-from abc import ABC, abstractmethod
 import httpx
 import streamlit as st
 from configuration import API_BASE_URL, MAX_FILE_SIZE_MB, ALLOWED_EXTENSIONS, LLM_MODEL, THINKING_MESSAGES
+
+# Create persistence directory
+CHAT_HISTORY_DIR = Path("chat_history")
+CHAT_HISTORY_DIR.mkdir(exist_ok=True)
 
 # API Client
 class APIClient:
@@ -73,50 +77,166 @@ class APIClient:
         except:
             pass
 
-# Persistence Functions
+# File-based Persistence Functions
+def get_safe_filename(doc_name: str) -> str:
+    """Convert document name to safe filename"""
+    return "".join(c if c.isalnum() or c in "._-" else "_" for c in doc_name)
+
 def save_chat_history_to_local(doc_name: str, data: List[Dict]):
-    """Save chat history using JSON export format"""
+    """Save chat history to local JSON file"""
     try:
-        json_str = json.dumps(data)
-        if len(json_str) > 3800:
-            json_str = json_str[:3800]
-        st.query_params(chat=json_str, doc=doc_name)
+        safe_filename = get_safe_filename(doc_name)
+        file_path = CHAT_HISTORY_DIR / f"{safe_filename}_chat.json"
+
+        chat_data = {
+            "document": doc_name,
+            "last_updated": datetime.now().isoformat(),
+            "message_count": len(data),
+            "messages": data
+        }
+
+        with open(file_path, 'w', encoding='utf-8') as f:
+            json.dump(chat_data, f, indent=2, ensure_ascii=False)
     except Exception:
         pass
 
-def load_chat_history_from_local() -> Tuple[Optional[str], Optional[List[Dict]]]:
-    """Load chat history from query params"""
+def load_chat_history_from_local(doc_name: str) -> Optional[List[Dict]]:
+    """Load chat history from local JSON file"""
     try:
-        params = st.query_params()
-        doc_name = params.get("doc", [None])[0]
-        chat_json = params.get("chat", [None])[0]
-        if doc_name and chat_json:
-            return doc_name, json.loads(chat_json)
+        safe_filename = get_safe_filename(doc_name)
+        file_path = CHAT_HISTORY_DIR / f"{safe_filename}_chat.json"
+
+        if file_path.exists():
+            with open(file_path, 'r', encoding='utf-8') as f:
+                chat_data = json.load(f)
+                return chat_data.get("messages", [])
     except Exception:
         pass
-    return None, None
+    return None
+
+def load_last_active_document() -> Optional[str]:
+    """Find the most recently updated chat file"""
+    try:
+        chat_files = list(CHAT_HISTORY_DIR.glob("*_chat.json"))
+        if not chat_files:
+            return None
+
+        latest_file = max(chat_files, key=lambda p: p.stat().st_mtime)
+
+        with open(latest_file, 'r', encoding='utf-8') as f:
+            chat_data = json.load(f)
+            return chat_data.get("document")
+    except Exception:
+        return None
+
+def delete_chat_history(doc_name: str):
+    """Delete chat history file"""
+    try:
+        safe_filename = get_safe_filename(doc_name)
+        file_path = CHAT_HISTORY_DIR / f"{safe_filename}_chat.json"
+        if file_path.exists():
+            file_path.unlink()
+    except Exception:
+        pass
+
+# Optimized Export Functions - Reuse Persistence Files
+def export_chat_as_json(doc_name: str) -> str:
+    """Export chat by reading the persisted JSON file directly"""
+    try:
+        safe_filename = get_safe_filename(doc_name)
+        file_path = CHAT_HISTORY_DIR / f"{safe_filename}_chat.json"
+
+        if file_path.exists():
+            with open(file_path, 'r', encoding='utf-8') as f:
+                return f.read()
+        else:
+            messages = st.session_state.document_chats.get(doc_name, [])
+            export_data = {
+                "document": doc_name,
+                "exported_at": datetime.now().isoformat(),
+                "message_count": len(messages),
+                "messages": messages
+            }
+            return json.dumps(export_data, indent=2, ensure_ascii=False)
+    except Exception:
+        return "{}"
+
+def export_chat_as_markdown(doc_name: str) -> str:
+    """Export chat as Markdown by reading from persisted file"""
+    try:
+        safe_filename = get_safe_filename(doc_name)
+        file_path = CHAT_HISTORY_DIR / f"{safe_filename}_chat.json"
+
+        if file_path.exists():
+            with open(file_path, 'r', encoding='utf-8') as f:
+                chat_data = json.load(f)
+                messages = chat_data.get("messages", [])
+        else:
+            messages = st.session_state.document_chats.get(doc_name, [])
+
+        lines = [f"# Chat Conversation: {doc_name}",
+                 f"\n**Exported:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+                 f"\n**Messages:** {len(messages)}", "\n---\n"]
+
+        for i, msg in enumerate(messages, 1):
+            role = msg.get("role", "unknown")
+            content = msg.get("content", "")
+            timestamp = msg.get("timestamp", "")
+            stopped = msg.get("stopped", False)
+
+            role_display = "👤 **User**" if role == "user" else "🤖 **Assistant**"
+            lines.append(f"\n## Message {i}: {role_display}\n")
+
+            if timestamp:
+                try:
+                    dt = datetime.fromisoformat(timestamp)
+                    lines.append(f"*Time: {dt.strftime('%I:%M %p')}*\n")
+                except:
+                    pass
+
+            lines.append(f"\n{content}\n")
+            if stopped:
+                lines.append("\n*⚠️ Generation was stopped by user*\n")
+            lines.append("\n---\n")
+
+        return "".join(lines)
+    except Exception:
+        return "# Export Error\nCould not export chat history."
 
 # Session State
 def init_session_state() -> None:
-    defaults = {'document_chats': {}, 'selected_document': None, 'uploader_key': 0,
-                'pending_toasts': [], 'last_uploaded_files': [], 'is_generating': False, 'stop_generation': False,
-                'persistence_loaded': False}
+    defaults = {
+        'document_chats': {},
+        'selected_document': None,
+        'uploader_key': 0,
+        'pending_toasts': [],
+        'last_uploaded_files': [],
+        'is_generating': False,
+        'stop_generation': False,
+        'persistence_loaded': False
+    }
     for key, value in defaults.items():
         if key not in st.session_state:
             st.session_state[key] = value
 
-    # Load persisted chat once on first run
     if not st.session_state.persistence_loaded:
-        doc_name, chat_data = load_chat_history_from_local()
-        if doc_name and chat_data:
-            st.session_state.document_chats[doc_name] = chat_data
-            st.session_state.selected_document = doc_name
+        last_doc = load_last_active_document()
+        if last_doc:
+            chat_data = load_chat_history_from_local(last_doc)
+            if chat_data:
+                st.session_state.document_chats[last_doc] = chat_data
+                st.session_state.selected_document = last_doc
         st.session_state.persistence_loaded = True
 
 def get_current_chat() -> List[Dict]:
     doc = st.session_state.selected_document
-    if doc and doc not in st.session_state.document_chats:
-        st.session_state.document_chats[doc] = []
+    if doc:
+        if doc not in st.session_state.document_chats:
+            saved_chat = load_chat_history_from_local(doc)
+            if saved_chat:
+                st.session_state.document_chats[doc] = saved_chat
+            else:
+                st.session_state.document_chats[doc] = []
     return st.session_state.document_chats.get(doc, [])
 
 def add_message(message: Dict) -> None:
@@ -151,51 +271,6 @@ class ToastNotification:
             st.toast(f"{toast['message']}", icon=icon)
         st.session_state.pending_toasts = []
 
-# Export Strategies
-class ExportStrategy(ABC):
-    @abstractmethod
-    def export(self, messages: List[Dict], document_name: str) -> str:
-        pass
-
-class JSONExporter(ExportStrategy):
-    def export(self, messages: List[Dict], document_name: str) -> str:
-        export_data = {
-            "document": document_name,
-            "exported_at": datetime.now().isoformat(),
-            "message_count": len(messages),
-            "conversation": messages
-        }
-        return json.dumps(export_data, indent=2, ensure_ascii=False)
-
-class MarkdownExporter(ExportStrategy):
-    def export(self, messages: List[Dict], document_name: str) -> str:
-        lines = [f"# Chat Conversation: {document_name}",
-                 f"\n**Exported:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
-                 f"\n**Messages:** {len(messages)}", "\n---\n"]
-
-        for i, msg in enumerate(messages, 1):
-            role = msg.get("role", "unknown")
-            content = msg.get("content", "")
-            timestamp = msg.get("timestamp", "")
-            stopped = msg.get("stopped", False)
-
-            role_display = "👤 **User**" if role == "user" else "🤖 **Assistant**"
-            lines.append(f"\n## Message {i}: {role_display}\n")
-
-            if timestamp:
-                try:
-                    dt = datetime.fromisoformat(timestamp)
-                    lines.append(f"*Time: {dt.strftime('%I:%M %p')}*\n")
-                except:
-                    pass
-
-            lines.append(f"\n{content}\n")
-            if stopped:
-                lines.append("\n*⚠️ Generation was stopped by user*\n")
-            lines.append("\n---\n")
-
-        return "".join(lines)
-
 # UI Styling
 def apply_custom_css() -> None:
     st.markdown("""
@@ -219,8 +294,9 @@ def render_document_card(doc: Dict, api_client: APIClient) -> None:
         if st.button(f"{'📘' if is_selected else '📄'} **{doc_name}**", key=f"select_{doc_name}",
                      use_container_width=True, type="primary" if is_selected else "secondary", **get_ui_state()):
             st.session_state.selected_document = doc_name
-            if doc_name in st.session_state.document_chats:
-                save_chat_history_to_local(doc_name, st.session_state.document_chats[doc_name])
+            saved_chat = load_chat_history_from_local(doc_name)
+            if saved_chat:
+                st.session_state.document_chats[doc_name] = saved_chat
             st.rerun()
 
     with col2:
@@ -228,9 +304,9 @@ def render_document_card(doc: Dict, api_client: APIClient) -> None:
             status_code, response = api_client.delete_document(doc_name)
             if status_code == 200:
                 st.session_state.document_chats.pop(doc_name, None)
+                delete_chat_history(doc_name)
                 if st.session_state.selected_document == doc_name:
                     st.session_state.selected_document = None
-                    st.query_params()
                 ToastNotification.show(f"Deleted {doc_name}", "success")
                 st.rerun()
             else:
@@ -330,30 +406,39 @@ async def process_stream(api_client: APIClient, prompt: str, thinking_placeholde
 
     return response, stopped
 
-def render_export_buttons(chat_history: List[Dict], doc_name: str) -> None:
+def render_export_buttons(doc_name: str) -> None:
     col1, col2, _ = st.columns([1.5, 1.5, 7])
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     clean_doc_name = doc_name.replace('.pdf', '').replace('.txt', '').replace('.docx', '')
     is_streaming = st.session_state.is_generating
 
-    json_exporter = JSONExporter()
-    md_exporter = MarkdownExporter()
-
     with col1:
-        json_content = json_exporter.export(chat_history, st.session_state.selected_document)
+        json_content = export_chat_as_json(doc_name)
         json_size = len(json_content.encode('utf-8')) / 1024
-        st.download_button(label="📄 Export JSON", data=json_content,
-                          file_name=f"{clean_doc_name}_chat_{timestamp}.json",
-                          mime="application/json", use_container_width=True, type="secondary",
-                          disabled=is_streaming, help=f"Download {len(chat_history)} messages as JSON ({json_size:.1f} KB)")
+        st.download_button(
+            label="📄 Export JSON",
+            data=json_content,
+            file_name=f"{clean_doc_name}_chat_{timestamp}.json",
+            mime="application/json",
+            use_container_width=True,
+            type="secondary",
+            disabled=is_streaming,
+            help=f"Download chat as JSON ({json_size:.1f} KB)"
+        )
 
     with col2:
-        md_content = md_exporter.export(chat_history, st.session_state.selected_document)
+        md_content = export_chat_as_markdown(doc_name)
         md_size = len(md_content.encode('utf-8')) / 1024
-        st.download_button(label="📝 Export MD", data=md_content,
-                          file_name=f"{clean_doc_name}_chat_{timestamp}.md",
-                          mime="text/markdown", use_container_width=True, type="secondary",
-                          disabled=is_streaming, help=f"Download {len(chat_history)} messages as Markdown ({md_size:.1f} KB)")
+        st.download_button(
+            label="📝 Export MD",
+            data=md_content,
+            file_name=f"{clean_doc_name}_chat_{timestamp}.md",
+            mime="text/markdown",
+            use_container_width=True,
+            type="secondary",
+            disabled=is_streaming,
+            help=f"Download chat as Markdown ({md_size:.1f} KB)"
+        )
 
 def render_chat_history(messages: List[Dict]) -> None:
     for msg in messages:
@@ -394,7 +479,7 @@ def render_chat(api_client: APIClient, health_data: Optional[Dict] = None) -> No
     chat_history = get_current_chat()
 
     if chat_history:
-        render_export_buttons(chat_history, st.session_state.selected_document)
+        render_export_buttons(st.session_state.selected_document)
 
     messages_to_display = chat_history[:-1] if st.session_state.is_generating else chat_history
     render_chat_history(messages_to_display)
