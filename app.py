@@ -3,165 +3,31 @@ import json
 import asyncio
 import random
 from datetime import datetime
-from pathlib import Path
-from typing import List, Dict, Optional, AsyncIterator, Tuple
-import httpx
+from typing import List, Dict, Optional, Tuple
 import streamlit as st
-from configuration import API_BASE_URL, MAX_FILE_SIZE_MB, ALLOWED_EXTENSIONS, LLM_MODEL, THINKING_MESSAGES
+from configuration import API_BASE_URL, MAX_FILE_SIZE_MB, UI_ALLOWED_EXTENSIONS, LLM_MODEL, THINKING_MESSAGES
+from frontend.api_client import APIClient
+from frontend.persistence import (
+    save_chat_history_to_local,
+    load_chat_history_from_local,
+    delete_chat_history,
+    export_chat_as_json,
+)
+from frontend.notifications import ToastNotification
+from frontend.styling import apply_custom_css
 
-# Create persistence directory
-CHAT_HISTORY_DIR = Path("chat_history")
-CHAT_HISTORY_DIR.mkdir(exist_ok=True)
-
-# API Client
-class APIClient:
-    def __init__(self, base_url: str):
-        self.base_url = base_url
-        self.sync_client = httpx.Client(timeout=60.0)
-        self.async_client = httpx.AsyncClient(timeout=60.0)
-
-    def _make_request(self, method: str, endpoint: str, timeout: int = 10, **kwargs) -> Tuple[int, Dict]:
-        try:
-            url = f"{self.base_url}{endpoint}"
-            response = self.sync_client.request(method, url, timeout=timeout, **kwargs)
-            data = response.json() if response.content else {}
-            return response.status_code, data
-        except json.JSONDecodeError:
-            return response.status_code, {"message": "Invalid JSON response"}
-        except httpx.RequestError as e:
-            return 500, {"message": f"Connection error: {str(e)}"}
-
-    def health_check(self) -> Tuple[bool, Optional[Dict]]:
-        try:
-            response = self.sync_client.get(f"{self.base_url}/health", timeout=5)
-            return response.status_code == 200, response.json() if response.is_success else None
-        except httpx.RequestError:
-            return False, None
-
-    def get_documents(self) -> List[Dict]:
-        status_code, data = self._make_request('GET', '/documents')
-        return data if status_code == 200 else []
-
-    def upload_file(self, file) -> Tuple[int, Dict]:
-        try:
-            files = {"file": (file.name, file, file.type)}
-            response = self.sync_client.post(f"{self.base_url}/upload", files=files, timeout=60)
-            return response.status_code, response.json() if response.content else {}
-        except Exception as e:
-            return 500, {"message": f"Upload failed: {str(e)}"}
-
-    def delete_document(self, filename: str) -> Tuple[int, Dict]:
-        return self._make_request('DELETE', f'/documents/{filename}', timeout=30)
-
-    async def query_stream(self, question: str, top_k: int = 4) -> AsyncIterator[Dict]:
-        try:
-            payload = {"question": question, "stream": True, "top_k": top_k, "model": LLM_MODEL}
-            async with self.async_client.stream('POST', f"{self.base_url}/query", json=payload, timeout=120.0) as response:
-                if response.status_code == 200:
-                    async for line in response.aiter_lines():
-                        if line and line.startswith('data: '):
-                            try:
-                                yield json.loads(line[6:])
-                            except json.JSONDecodeError:
-                                continue
-                else:
-                    yield {"type": "error", "message": f"Query failed with status {response.status_code}"}
-        except httpx.ReadTimeout:
-            yield {"type": "error", "message": "Request timed out"}
-        except Exception as e:
-            yield {"type": "error", "message": str(e)}
-
-    def __del__(self):
-        try:
-            self.sync_client.close()
-        except:
-            pass
-
-# File-based Persistence Functions
-def get_safe_filename(doc_name: str) -> str:
-    """Convert document name to safe filename"""
-    return "".join(c if c.isalnum() or c in "._-" else "_" for c in doc_name)
-
-def save_chat_history_to_local(doc_name: str, data: List[Dict]):
-    """Save chat history to local JSON file"""
-    try:
-        safe_filename = get_safe_filename(doc_name)
-        file_path = CHAT_HISTORY_DIR / f"{safe_filename}_chat.json"
-
-        chat_data = {
-            "document": doc_name,
-            "last_updated": datetime.now().isoformat(),
-            "message_count": len(data),
-            "messages": data
-        }
-
-        with open(file_path, 'w', encoding='utf-8') as f:
-            json.dump(chat_data, f, indent=2, ensure_ascii=False)
-    except Exception:
-        pass
-
-def load_chat_history_from_local(doc_name: str) -> Optional[List[Dict]]:
-    """Load chat history from local JSON file"""
-    try:
-        safe_filename = get_safe_filename(doc_name)
-        file_path = CHAT_HISTORY_DIR / f"{safe_filename}_chat.json"
-
-        if file_path.exists():
-            with open(file_path, 'r', encoding='utf-8') as f:
-                chat_data = json.load(f)
-                return chat_data.get("messages", [])
-    except Exception:
-        pass
-    return None
-
-def delete_chat_history(doc_name: str):
-    """Delete chat history file"""
-    try:
-        safe_filename = get_safe_filename(doc_name)
-        file_path = CHAT_HISTORY_DIR / f"{safe_filename}_chat.json"
-        if file_path.exists():
-            file_path.unlink()
-    except Exception:
-        pass
-
-# Optimized Export Functions - Reuse Persistence Files
-def export_chat_as_json(doc_name: str) -> str:
-    """Export chat by reading the persisted JSON file directly"""
-    try:
-        safe_filename = get_safe_filename(doc_name)
-        file_path = CHAT_HISTORY_DIR / f"{safe_filename}_chat.json"
-
-        if file_path.exists():
-            with open(file_path, 'r', encoding='utf-8') as f:
-                return f.read()
-        else:
-            messages = st.session_state.document_chats.get(doc_name, [])
-            export_data = {
-                "document": doc_name,
-                "exported_at": datetime.now().isoformat(),
-                "message_count": len(messages),
-                "messages": messages
-            }
-            return json.dumps(export_data, indent=2, ensure_ascii=False)
-    except Exception:
-        return "{}"
+## Persistence helpers imported from frontend.persistence
 
 def export_chat_as_markdown(doc_name: str) -> str:
-    """Export chat as Markdown by reading from persisted file"""
     try:
-        safe_filename = get_safe_filename(doc_name)
-        file_path = CHAT_HISTORY_DIR / f"{safe_filename}_chat.json"
+        messages = load_chat_history_from_local(doc_name) or st.session_state.document_chats.get(doc_name, [])
 
-        if file_path.exists():
-            with open(file_path, 'r', encoding='utf-8') as f:
-                chat_data = json.load(f)
-                messages = chat_data.get("messages", [])
-        else:
-            messages = st.session_state.document_chats.get(doc_name, [])
-
-        lines = [f"# Chat Conversation: {doc_name}",
-                 f"\n**Exported:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
-                 f"\n**Messages:** {len(messages)}", "\n---\n"]
+        lines = [
+            f"# Chat Conversation: {doc_name}",
+            f"\n**Exported:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+            f"\n**Messages:** {len(messages)}",
+            "\n---\n",
+        ]
 
         for i, msg in enumerate(messages, 1):
             role = msg.get("role", "unknown")
@@ -176,7 +42,7 @@ def export_chat_as_markdown(doc_name: str) -> str:
                 try:
                     dt = datetime.fromisoformat(timestamp)
                     lines.append(f"*Time: {dt.strftime('%I:%M %p')}*\n")
-                except:
+                except Exception:
                     pass
 
             lines.append(f"\n{content}\n")
@@ -228,37 +94,9 @@ def clear_chat() -> None:
 def get_ui_state() -> Dict[str, bool]:
     return {"disabled": st.session_state.is_generating}
 
-# Notifications
-class ToastNotification:
-    ICONS = {"success": "✅", "error": "❌", "warning": "⚠️", "info": "ℹ️"}
+## Notifications now imported from frontend.notifications
 
-    @staticmethod
-    def show(message: str, toast_type: str = "info") -> None:
-        if 'pending_toasts' not in st.session_state:
-            st.session_state.pending_toasts = []
-        st.session_state.pending_toasts.append({'message': message, 'type': toast_type})
-
-    @staticmethod
-    def render_pending() -> None:
-        if 'pending_toasts' not in st.session_state or not st.session_state.pending_toasts:
-            return
-        for toast in st.session_state.pending_toasts:
-            icon = ToastNotification.ICONS.get(toast['type'], "ℹ️")
-            st.toast(f"{toast['message']}", icon=icon)
-        st.session_state.pending_toasts = []
-
-# UI Styling
-def apply_custom_css() -> None:
-    st.markdown("""
-        <style>
-        .stChatMessage {border-radius: 10px; padding: 10px; margin-bottom: 10px;}
-        button[kind="primary"] {background-color: #4CAF50;}
-        .stButton button {transition: all 0.3s ease;}
-        .stButton button:hover {transform: translateY(-2px); box-shadow: 0 4px 8px rgba(0,0,0,0.2);}
-        footer {visibility: hidden;}
-        #MainMenu {visibility: hidden;}
-        </style>
-    """, unsafe_allow_html=True)
+## Styling now imported from frontend.styling
 
 # UI Components
 def render_document_card(doc: Dict, api_client: APIClient) -> None:
@@ -310,7 +148,7 @@ def render_sidebar(api_client: APIClient) -> None:
         st.markdown("---")
         st.subheader("📤 Upload Documents")
 
-        uploaded_files = st.file_uploader("Choose files", type=ALLOWED_EXTENSIONS, accept_multiple_files=True,
+        uploaded_files = st.file_uploader("Choose files", type=UI_ALLOWED_EXTENSIONS, accept_multiple_files=True,
                                          key=f"uploader_{st.session_state.uploader_key}", 
                                          label_visibility="collapsed", **get_ui_state())
 
@@ -335,7 +173,7 @@ def render_sidebar(api_client: APIClient) -> None:
                 st.rerun()
 
         with st.expander("ℹ️ Upload Requirements", expanded=False):
-            st.caption(f"**Formats:** {', '.join(ALLOWED_EXTENSIONS).upper()}")
+            st.caption(f"**Formats:** {', '.join(UI_ALLOWED_EXTENSIONS).upper()}")
             st.caption(f"**Max size:** {MAX_FILE_SIZE_MB} MB per file")
             st.caption(f"**Multiple files:** Supported")
 
@@ -345,36 +183,32 @@ def render_sidebar(api_client: APIClient) -> None:
                 clear_chat()
                 st.rerun()
 
-async def process_stream(api_client: APIClient, prompt: str, thinking_placeholder, response_placeholder) -> Tuple[str, bool]:
+async def process_stream(api_client: APIClient, prompt: str, response_placeholder) -> Tuple[str, bool]:
     response = ""
     stopped = False
     try:
-        async for data in api_client.query_stream(prompt):
+        response_placeholder.markdown(f"*{random.choice(THINKING_MESSAGES)}... *")
+        async for data in api_client.query_stream(prompt, model=LLM_MODEL):
             if st.session_state.stop_generation:
                 stopped = True
-                thinking_placeholder.empty()
                 response += "\n\n*[Interrupted by user]*" if response else "*[Interrupted]*"
                 response_placeholder.markdown(response)
                 break
 
             if data.get('type') == 'content':
-                thinking_placeholder.empty()
                 response += data.get('content', '')
                 response_placeholder.markdown(response + "▌")
             elif data.get('type') == 'done':
                 response_placeholder.markdown(response)
             elif data.get('type') == 'error':
-                thinking_placeholder.empty()
                 error = f"❌ Error: {data.get('message', 'Unknown error')}"
                 response_placeholder.error(error)
                 response = error
                 break
 
-        thinking_placeholder.empty()
         if response:
             response_placeholder.markdown(response)
     except Exception as e:
-        thinking_placeholder.empty()
         error = f"❌ Error: {str(e)}"
         response_placeholder.error(error)
         response = error
@@ -389,7 +223,7 @@ def render_export_buttons(doc_name: str) -> None:
     is_streaming = st.session_state.is_generating
 
     with col1:
-        json_content = export_chat_as_json(doc_name)
+        json_content = export_chat_as_json(doc_name, st.session_state.document_chats.get(doc_name, []))
         json_size = len(json_content.encode('utf-8')) / 1024
         st.download_button(
             label="📄 Export JSON",
@@ -484,20 +318,20 @@ def render_chat(api_client: APIClient, health_data: Optional[Dict] = None) -> No
                         pass
 
             with st.chat_message("assistant", avatar="🤖"):
-                thinking_placeholder = st.empty()
-                thinking_message = f"*{random.choice(THINKING_MESSAGES)}... *"
-                thinking_placeholder.markdown(thinking_message)
-
                 col1, col2 = st.columns([6, 1])
                 with col1:
+                    st.markdown('<div class="response-box">', unsafe_allow_html=True)
                     response_placeholder = st.empty()
+                    st.markdown('</div>', unsafe_allow_html=True)
                 with col2:
+                    st.markdown('<div class="stop-col">', unsafe_allow_html=True)
                     if st.button("⏹️", key="stop_inline", help="Stop generation", use_container_width=False):
                         st.session_state.stop_generation = True
                         st.rerun()
+                    st.markdown('</div>', unsafe_allow_html=True)
 
                 response, stopped = asyncio.run(
-                    process_stream(api_client, user_prompt, thinking_placeholder, response_placeholder)
+                    process_stream(api_client, user_prompt, response_placeholder)
                 )
 
                 add_message({
