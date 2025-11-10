@@ -2,6 +2,7 @@
 import json
 import logging
 from datetime import datetime
+import os
 from pathlib import Path
 from typing import List, Dict, Any, Tuple, Optional, AsyncIterator
 from contextlib import asynccontextmanager
@@ -16,16 +17,12 @@ from pydantic import BaseModel, Field
 from langchain_ollama import OllamaEmbeddings
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.document_loaders import PyMuPDFLoader, TextLoader, Docx2txtLoader
+from configuration import (FALLBACK_BASE_URL, DEFAULT_MODEL, DEFAULT_EMBEDDING_MODEL, MAX_FILE_SIZE_MB, ALLOWED_EXTENSIONS, UPLOAD_DIR, VECTOR_DIR, MAX_FILE_SIZE_BYTES)
 
-# Configuration
-OLLAMA_BASE_URL = "http://localhost:11434"
-FIXED_MODEL = "llama3.2"
-DEFAULT_EMBEDDING_MODEL = "nomic-embed-text"
-UPLOAD_DIR = Path("uploaded_documents")
-VECTOR_DIR = Path("vector_data")
-ALLOWED_EXTENSIONS = {'.pdf', '.txt', '.docx'}
-MAX_FILE_SIZE_MB = 20
-MAX_FILE_SIZE_BYTES = MAX_FILE_SIZE_MB * 1024 * 1024
+
+OLLAMA_EMBED_MODEL = os.environ.get("OLLAMA_EMBED_MODEL", DEFAULT_EMBEDDING_MODEL)
+API_BASE_URL = os.environ.get("OLLAMA_BASE_URL", FALLBACK_BASE_URL)
+OLLAMA_CHAT_MODEL = os.environ.get("OLLAMA_CHAT_MODEL", DEFAULT_MODEL)
 
 UPLOAD_DIR.mkdir(exist_ok=True)
 VECTOR_DIR.mkdir(exist_ok=True)
@@ -80,7 +77,7 @@ def validate_file(filename: str, file_size: int) -> None:
 
 def check_ollama_health() -> Tuple[bool, str]:
     try:
-        response = httpx.get(f"{OLLAMA_BASE_URL}/api/tags", timeout=5)
+        response = httpx.get(f"{API_BASE_URL}/api/tags", timeout=5)
         return response.status_code == 200, "Available" if response.status_code == 200 else f"HTTP {response.status_code}"
     except Exception as e:
         return False, f"Connection failed: {str(e)}"
@@ -218,7 +215,7 @@ class VectorStore:
 
 # Ollama LLM Client
 class AsyncOllamaLLM:
-    def __init__(self, model: str = FIXED_MODEL, base_url: str = OLLAMA_BASE_URL, temperature: float = 0.7):
+    def __init__(self, model: str = OLLAMA_CHAT_MODEL, base_url: str = API_BASE_URL, temperature: float = 0.7):
         self.model = model
         self.temperature = temperature
         self.base_url = base_url.rstrip('/')
@@ -268,7 +265,7 @@ class ModelManager:
         if self._embeddings_model is None:
             self._embeddings_model = OllamaEmbeddings(
                 model=self.config.get('embedding_model'),
-                base_url=OLLAMA_BASE_URL
+                base_url=API_BASE_URL
             )
         return self._embeddings_model
 
@@ -276,8 +273,8 @@ class ModelManager:
     def llm(self) -> AsyncOllamaLLM:
         if self._llm is None:
             self._llm = AsyncOllamaLLM(
-                model=FIXED_MODEL,
-                base_url=OLLAMA_BASE_URL,
+                model=OLLAMA_CHAT_MODEL,
+                base_url=API_BASE_URL,
                 temperature=self.config.get('temperature', 0.7)
             )
         return self._llm
@@ -317,7 +314,7 @@ class DocumentProcessor:
 # Initialize stores
 config_store = JSONStore(
     VECTOR_DIR / "config.json",
-    defaults={'model': FIXED_MODEL, 'embedding_model': DEFAULT_EMBEDDING_MODEL, 
+    defaults={'model': OLLAMA_CHAT_MODEL, 'embedding_model': OLLAMA_EMBED_MODEL, 
               'chunk_size': 1000, 'chunk_overlap': 200, 'temperature': 0.7, 'total_queries': 0}
 )
 metadata_store = JSONStore(VECTOR_DIR / "metadata.json")
@@ -356,7 +353,7 @@ async def health_check():
         "status": "healthy",
         "timestamp": datetime.now().isoformat(),
         "ollama_status": {"available": ollama_available, "message": ollama_message},
-        "configuration": {"model": FIXED_MODEL, "embedding_model": config_store.get('embedding_model'), 
+        "configuration": {"model": OLLAMA_CHAT_MODEL, "embedding_model": config_store.get('embedding_model'), 
                          "chunk_size": config_store.get('chunk_size')},
         "document_count": len(metadata_store.data),
         "total_chunks": stats.get("total_chunks", 0),
@@ -446,7 +443,7 @@ Your response:"""
                 try:
                     metadata = {
                         "sources": sources, "chunks_used": len(similar_docs),
-                        "similarity_scores": scores, "model_used": FIXED_MODEL, "type": "metadata"
+                        "similarity_scores": scores, "model_used": OLLAMA_CHAT_MODEL, "type": "metadata"
                     }
                     yield f"data: {json.dumps(metadata)}\n\n"
 
@@ -473,7 +470,7 @@ Your response:"""
 
             return {
                 "answer": full_response, "sources": sources, "chunks_used": len(similar_docs),
-                "similarity_scores": scores, "processing_time": processing_time, "model_used": FIXED_MODEL
+                "similarity_scores": scores, "processing_time": processing_time, "model_used": OLLAMA_CHAT_MODEL
             }
     except HTTPException:
         raise

@@ -2,12 +2,16 @@
 import json
 import asyncio
 import random
+import os
 from datetime import datetime
 from pathlib import Path
 from typing import List, Dict, Optional, AsyncIterator, Tuple
 import httpx
 import streamlit as st
-from configuration import API_BASE_URL, MAX_FILE_SIZE_MB, ALLOWED_EXTENSIONS, LLM_MODEL, THINKING_MESSAGES
+from configuration import FALLBACK_BASE_URL, MAX_FILE_SIZE_MB, UI_ALLOWED_EXTENSIONS, DEFAULT_MODEL, THINKING_MESSAGES
+
+API_BASE_URL = os.environ.get("OLLAMA_BASE_URL", FALLBACK_BASE_URL)
+OLLAMA_CHAT_MODEL = os.environ.get("OLLAMA_CHAT_MODEL", DEFAULT_MODEL)
 
 # Create persistence directory
 CHAT_HISTORY_DIR = Path("chat_history")
@@ -55,7 +59,7 @@ class APIClient:
 
     async def query_stream(self, question: str, top_k: int = 4) -> AsyncIterator[Dict]:
         try:
-            payload = {"question": question, "stream": True, "top_k": top_k, "model": LLM_MODEL}
+            payload = {"question": question, "stream": True, "top_k": top_k, "model": DEFAULT_MODEL}
             async with self.async_client.stream('POST', f"{self.base_url}/query", json=payload, timeout=120.0) as response:
                 if response.status_code == 200:
                     async for line in response.aiter_lines():
@@ -303,14 +307,14 @@ def render_sidebar(api_client: APIClient) -> None:
             for doc in documents:
                 render_document_card(doc, api_client)
             if documents:
-                st.caption(f"🤖 Using model: **{LLM_MODEL}**")
+                st.caption(f"🤖 Using model: **{DEFAULT_MODEL}**")
         else:
             st.info("💡 No documents yet. Upload below!")
 
         st.markdown("---")
         st.subheader("📤 Upload Documents")
 
-        uploaded_files = st.file_uploader("Choose files", type=ALLOWED_EXTENSIONS, accept_multiple_files=True,
+        uploaded_files = st.file_uploader("Choose files", type=UI_ALLOWED_EXTENSIONS, accept_multiple_files=True,
                                          key=f"uploader_{st.session_state.uploader_key}", 
                                          label_visibility="collapsed", **get_ui_state())
 
@@ -335,7 +339,7 @@ def render_sidebar(api_client: APIClient) -> None:
                 st.rerun()
 
         with st.expander("ℹ️ Upload Requirements", expanded=False):
-            st.caption(f"**Formats:** {', '.join(ALLOWED_EXTENSIONS).upper()}")
+            st.caption(f"**Formats:** {', '.join(UI_ALLOWED_EXTENSIONS).upper()}")
             st.caption(f"**Max size:** {MAX_FILE_SIZE_MB} MB per file")
             st.caption(f"**Multiple files:** Supported")
 
