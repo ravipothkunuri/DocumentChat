@@ -19,9 +19,6 @@ Example:
     store.add_document("doc.pdf", chunks, embeddings, 1024)
     results = store.search(query_embedding, k=5)
     docs = store.list_documents()
-
-Author: Your Name
-Version: 1.0.0
 """
 
 import json

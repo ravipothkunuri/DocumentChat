@@ -24,9 +24,6 @@ Architecture:
 Environment Variables:
     - OLLAMA_BASE_URL: Backend API URL (default: http://localhost:8000)
     - OLLAMA_CHAT_MODEL: Model name for display
-
-Author: Your Name
-Version: 1.0.0
 """
 
 import json
